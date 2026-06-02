@@ -108,7 +108,17 @@ class PairingViewModel(
         )
 
         viewModelScope.launch(Dispatchers.IO) {
-            val phonePubKey = Ed25519KeyManager.getRawPublicKey()
+            val phonePubKey = try {
+                Ed25519KeyManager.getRawPublicKey()
+            } catch (e: Throwable) {
+                Log.e("PairingViewModel", "Failed to access Ed25519 key pair: ${e.message}", e)
+                if (isCurrentAttempt(attemptId)) {
+                    _uiState.value = PairingState.Error(
+                        "Couldn't initialize the device identity key. Please update the app and try again."
+                    )
+                }
+                return@launch
+            }
             val phonePubKeyB64 = Base64.encodeToString(phonePubKey, Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
             attemptPairing(pairingRequest, phonePubKeyB64, attemptId, 0)
         }
@@ -189,7 +199,17 @@ class PairingViewModel(
                         val pcNonceStr = envelope.params?.optString("nonce") ?: ""
                         val pcNonceBytes = Base64.decode(pcNonceStr, Base64.URL_SAFE or Base64.NO_PADDING)
 
-                        val signature = Ed25519KeyManager.signChallenge(pcNonceBytes)
+                        val signature = try {
+                            Ed25519KeyManager.signChallenge(pcNonceBytes)
+                        } catch (e: Throwable) {
+                            Log.e("PairingViewModel", "Failed to sign PC challenge: ${e.message}", e)
+                            pairingSocket = null
+                            _uiState.value = PairingState.Error(
+                                "Couldn't sign the PC challenge. Please update the app and try again."
+                            )
+                            webSocket.close(1000, "Sign failure")
+                            return
+                        }
                         val signatureB64 = Base64.encodeToString(signature, Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
 
                         val resp = Envelope(

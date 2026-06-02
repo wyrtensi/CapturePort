@@ -41,7 +41,7 @@ object Ed25519KeyManager {
 
         deleteAliasIfExists(keyStore, KEY_ALIAS)
         val keyPair = generateKeyPair(KEY_ALIAS)
-        if (isUsableEd25519KeyPair(keyPair)) {
+        if (isStructurallyUsable(keyPair)) {
             return keyPair
         }
 
@@ -63,7 +63,7 @@ object Ed25519KeyManager {
         }
 
         val keyPair = KeyPair(publicKey, privateKey)
-        return if (isUsableEd25519KeyPair(keyPair)) {
+        return if (isStructurallyUsable(keyPair)) {
             keyPair
         } else {
             deleteAliasIfExists(keyStore, alias)
@@ -90,7 +90,13 @@ object Ed25519KeyManager {
         }
     }
 
-    private fun isUsableEd25519KeyPair(keyPair: KeyPair): Boolean {
+    // Structural sanity check: the KeyStore entry must expose an Ed25519 keypair whose
+    // public component encodes to a 32-byte raw key. We deliberately do NOT round-trip a
+    // probe signature through the default JCE provider here, because KeyFactory /
+    // Signature for "Ed25519" outside AndroidKeyStore is brittle across API 33/34 OEM
+    // builds and was the root cause of v0.1.6's "Failed to generate a valid Ed25519 key
+    // pair" crash. The PC validates the actual signature end-to-end via ed25519-dalek.
+    private fun isStructurallyUsable(keyPair: KeyPair): Boolean {
         if (!keyPair.public.algorithm.equals(ALGORITHM, ignoreCase = true)) {
             return false
         }
@@ -99,6 +105,16 @@ object Ed25519KeyManager {
             return false
         }
 
+        val rawPublicKey = extractRawPublicKey(keyPair.public) ?: return false
+        return rawPublicKey.size == 32
+    }
+
+    // Optional self-test used only as a diagnostic. Never causes key regeneration to fail.
+    // Returns true when a probe signature can be both produced by the AndroidKeyStore
+    // private key and verified against the exported raw public key via the default JCE.
+    // A false return value does NOT mean the keypair is broken — the PC will verify the
+    // real challenge signature using ed25519-dalek.
+    private fun runOptionalSelfTest(keyPair: KeyPair): Boolean {
         val rawPublicKey = extractRawPublicKey(keyPair.public) ?: return false
         val probeMessage = byteArrayOf(1, 2, 3, 4)
         val probeSignature = runCatching {

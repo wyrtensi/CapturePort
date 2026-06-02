@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.7] - 2026-06-02
+### Fixed
+- Android pairing no longer crashes with `Failed to generate a valid Ed25519 key pair in AndroidKeyStore`. The keypair self-test no longer rejects a freshly generated AndroidKeyStore Ed25519 entry when the default JCE provider (`KeyFactory`/`Signature` for `Ed25519`) is missing or misbehaving on certain Android 13/14 OEM builds. We now only do a structural check (algorithm + 32-byte raw public key) and let the PC verify the real challenge signature via `ed25519-dalek`.
+- Android pairing now shows a friendly in-app error instead of crashing the process if the device identity key still cannot be produced.
+
 ## [0.1.6] - 2026-06-02
 ### Fixed
 - Android pairing now validates that the exported Ed25519 public key actually matches the private key in AndroidKeyStore, and regenerates stale incompatible entries that previously caused `Fingerprint mismatch` pairing failures.
