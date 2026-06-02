@@ -104,132 +104,173 @@
 </script>
 
 <main class="app-container theme-dark">
-  {#if windowLabel === "pairing"}
-    <!-- PAIRING VIEW -->
-    <div class="panel pairing-panel animate-fade">
-      <header class="panel-header">
-        <h2>📱 Pair New Device</h2>
-        <p>Scan this QR code from the CapturePort app on your phone</p>
-      </header>
+  <div class="dashboard animate-fade">
+    <nav class="sidebar">
+      <div class="logo-area">
+        <div class="logo-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M5 12h14" />
+            <path d="M8 8l-4 4 4 4" />
+            <path d="M16 8l4 4-4 4" />
+            <path d="M12 5v14" />
+          </svg>
+        </div>
+        <h3>CapturePort</h3>
+      </div>
+      <div class="nav-links">
+        <button class="nav-btn" class:active={windowLabel === "history" || windowLabel === "main"} onclick={() => void loadView("history")}>
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H10l2 2h6.5A2.5 2.5 0 0 1 21 9.5v7A2.5 2.5 0 0 1 18.5 19h-13A2.5 2.5 0 0 1 3 16.5z" />
+          </svg>
+          <span>Activity log</span>
+        </button>
+        <button class="nav-btn" class:active={windowLabel === "pairing"} onclick={() => void loadView("pairing")}>
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="7" y="2.5" width="10" height="19" rx="2.5" />
+            <path d="M10 6.5h4" />
+            <circle cx="12" cy="17.5" r="1" fill="currentColor" stroke="none" />
+          </svg>
+          <span>Pairing</span>
+        </button>
+        <button class="nav-btn" class:active={windowLabel === "settings"} onclick={() => void loadView("settings")}>
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M4 7h7" />
+            <path d="M15 7h5" />
+            <path d="M4 17h3" />
+            <path d="M11 17h9" />
+            <circle cx="13" cy="7" r="2" />
+            <circle cx="9" cy="17" r="2" />
+          </svg>
+          <span>Settings</span>
+        </button>
+      </div>
+    </nav>
 
-      <div class="qr-container">
-        {#if pairingQr}
-          <div class="qr-graphic">
-            <!-- Render the raw QR SVG vector code directly -->
-            {@html pairingQr.replace("data:image/svg+xml;utf8,", "")}
+    <section class="content-area" class:content-area-centered={windowLabel === "pairing"}>
+      {#if windowLabel === "history" || windowLabel === "main"}
+        <div class="content-header">
+          <h2>Activity Log</h2>
+          <p>Recently received media files captured on your devices</p>
+        </div>
+
+        {#if mediaHistory.length === 0}
+          <div class="empty-state">
+            <div class="empty-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M5 8.5A2.5 2.5 0 0 1 7.5 6h2l1.2-1.5h2.6L14.5 6h2A2.5 2.5 0 0 1 19 8.5v7A2.5 2.5 0 0 1 16.5 18h-9A2.5 2.5 0 0 1 5 15.5z" />
+                <circle cx="12" cy="12" r="3" />
+              </svg>
+            </div>
+            <p>No media files received yet</p>
+            <p class="subtitle">Photos and videos will appear here automatically</p>
           </div>
         {:else}
-          <div class="qr-placeholder spinner"></div>
+          <div class="media-grid">
+            {#each mediaHistory as item}
+              <button class="media-card" onclick={() => openMediaFile(item.path)}>
+                <div class="media-preview-container">
+                  {#if item.kind === 'photo'}
+                    <img src="data:image/jpeg;base64,{item.base64_data}" class="media-preview" alt="Captured view" />
+                  {:else}
+                    <div class="video-preview-fallback">
+                      <span class="play-icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" fill="currentColor">
+                          <path d="M8 6.5v11l8.5-5.5z" />
+                        </svg>
+                      </span>
+                      <span class="video-badge">VIDEO</span>
+                    </div>
+                  {/if}
+                </div>
+                <div class="media-info">
+                  <span class="media-kind" class:kind-video={item.kind === 'video'}>
+                    {item.kind.toUpperCase()}
+                  </span>
+                  <span class="media-time">
+                    {new Date(item.timestamp).toLocaleTimeString()}
+                  </span>
+                </div>
+              </button>
+            {/each}
+          </div>
         {/if}
-      </div>
 
-      {#if pairingFingerprint}
-        <div class="fingerprint-box">
-          <span class="label">FINGERPRINT</span>
-          <code class="fingerprint">{pairingFingerprint}</code>
+      {:else if windowLabel === "pairing"}
+        <div class="pairing-content">
+          <div class="panel pairing-panel">
+            <header class="panel-header">
+              <div class="panel-title">
+                <span class="title-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="7" y="2.5" width="10" height="19" rx="2.5" />
+                    <path d="M10 6.5h4" />
+                    <circle cx="12" cy="17.5" r="1" fill="currentColor" stroke="none" />
+                  </svg>
+                </span>
+                <h2>Pair New Device</h2>
+              </div>
+              <p>Scan this QR code from the CapturePort app on your phone</p>
+            </header>
+
+            <div class="qr-container">
+              {#if pairingQr}
+                <div class="qr-graphic">
+                  <!-- Render the raw QR SVG vector code directly -->
+                  {@html pairingQr.replace("data:image/svg+xml;utf8,", "")}
+                </div>
+              {:else}
+                <div class="qr-placeholder spinner"></div>
+              {/if}
+            </div>
+
+            {#if pairingFingerprint}
+              <div class="fingerprint-box">
+                <span class="label">FINGERPRINT</span>
+                <code class="fingerprint">{pairingFingerprint}</code>
+              </div>
+            {/if}
+
+            <footer class="pairing-footer">
+              <div class="status-indicator">
+                <span class="pulse-dot"></span>
+                <span class="status-text">{pairingStatus}</span>
+              </div>
+            </footer>
+          </div>
         </div>
+
+      {:else if windowLabel === "settings"}
+        <div class="content-header">
+          <h2>Settings</h2>
+          <p>Configure your local network receiver parameters</p>
+        </div>
+
+        <form class="settings-form" onsubmit={(e) => { e.preventDefault(); saveSettings(); }}>
+          <div class="form-group">
+            <label for="device-name">Device Name</label>
+            <input id="device-name" type="text" bind:value={settings.deviceName} />
+          </div>
+
+          <div class="form-group">
+            <label for="port">WebSocket Port</label>
+            <input id="port" type="number" bind:value={settings.port} />
+          </div>
+
+          <div class="form-group checkbox-group">
+            <input id="mcp-enabled" type="checkbox" bind:checked={settings.mcpEnabled} />
+            <label for="mcp-enabled">Enable MCP Camera Server for AI agents</label>
+          </div>
+
+          <div class="form-group checkbox-group">
+            <input id="auto-start" type="checkbox" bind:checked={settings.autoStart} />
+            <label for="auto-start">Launch automatically on system startup</label>
+          </div>
+
+          <button type="submit" class="submit-btn">Save Configurations</button>
+        </form>
       {/if}
-
-      <footer class="pairing-footer">
-        <div class="status-indicator">
-          <span class="pulse-dot"></span>
-          <span class="status-text">{pairingStatus}</span>
-        </div>
-        <button class="secondary-btn" onclick={() => void loadView("history")}>Back to dashboard</button>
-      </footer>
-    </div>
-
-  {:else}
-    <!-- DEFAULT DASHBOARD (HISTORY & SETTINGS) -->
-    <div class="dashboard animate-fade">
-      <nav class="sidebar">
-        <div class="logo-area">
-          <span class="logo-icon">⚡</span>
-          <h3>CapturePort</h3>
-        </div>
-        <div class="nav-links">
-          <button class="nav-btn" class:active={windowLabel === "history" || windowLabel === "main"} onclick={() => void loadView("history")}>
-            📂 Activity log
-          </button>
-          <button class="nav-btn" class:active={windowLabel === "settings"} onclick={() => void loadView("settings")}>
-            ⚙ Settings
-          </button>
-        </div>
-      </nav>
-
-      <section class="content-area">
-        {#if windowLabel === "history" || windowLabel === "main"}
-          <div class="content-header">
-            <h2>Activity Log</h2>
-            <p>Recently received media files captured on your devices</p>
-          </div>
-
-          {#if mediaHistory.length === 0}
-            <div class="empty-state">
-              <span class="empty-icon">📷</span>
-              <p>No media files received yet</p>
-              <p class="subtitle">Photos and videos will appear here automatically</p>
-            </div>
-          {:else}
-            <div class="media-grid">
-              {#each mediaHistory as item}
-                <button class="media-card" onclick={() => openMediaFile(item.path)}>
-                  <div class="media-preview-container">
-                    {#if item.kind === 'photo'}
-                      <img src="data:image/jpeg;base64,{item.base64_data}" class="media-preview" alt="Captured view" />
-                    {:else}
-                      <div class="video-preview-fallback">
-                        <span class="play-icon">▶</span>
-                        <span class="video-badge">VIDEO</span>
-                      </div>
-                    {/if}
-                  </div>
-                  <div class="media-info">
-                    <span class="media-kind" class:kind-video={item.kind === 'video'}>
-                      {item.kind.toUpperCase()}
-                    </span>
-                    <span class="media-time">
-                      {new Date(item.timestamp).toLocaleTimeString()}
-                    </span>
-                  </div>
-                </button>
-              {/each}
-            </div>
-          {/if}
-
-        {:else if windowLabel === "settings"}
-          <div class="content-header">
-            <h2>Settings</h2>
-            <p>Configure your local network receiver parameters</p>
-          </div>
-
-          <form class="settings-form" onsubmit={(e) => { e.preventDefault(); saveSettings(); }}>
-            <div class="form-group">
-              <label for="device-name">Device Name</label>
-              <input id="device-name" type="text" bind:value={settings.deviceName} />
-            </div>
-
-            <div class="form-group">
-              <label for="port">WebSocket Port</label>
-              <input id="port" type="number" bind:value={settings.port} />
-            </div>
-
-            <div class="form-group checkbox-group">
-              <input id="mcp-enabled" type="checkbox" bind:checked={settings.mcpEnabled} />
-              <label for="mcp-enabled">Enable MCP Camera Server for AI agents</label>
-            </div>
-
-            <div class="form-group checkbox-group">
-              <input id="auto-start" type="checkbox" bind:checked={settings.autoStart} />
-              <label for="auto-start">Launch automatically on system startup</label>
-            </div>
-
-            <button type="submit" class="submit-btn">Save Configurations</button>
-          </form>
-        {/if}
-      </section>
-    </div>
-  {/if}
+    </section>
+  </div>
 </main>
 
 <style>
@@ -261,13 +302,20 @@
   }
 
   /* Pairing Panel Layout */
+  .pairing-content {
+    width: 100%;
+    min-height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
   .pairing-panel {
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    width: 100%;
-    height: 100%;
+    width: min(100%, 520px);
     padding: 24px;
     box-sizing: border-box;
   }
@@ -277,10 +325,27 @@
     margin-bottom: 20px;
   }
 
+  .panel-title {
+    display: inline-flex;
+    align-items: center;
+    gap: 12px;
+  }
+
   .panel-header h2 {
     margin: 0 0 6px 0;
     font-weight: 600;
     color: #A4B4FF;
+  }
+
+  .title-icon {
+    width: 22px;
+    height: 22px;
+    color: #A4B4FF;
+  }
+
+  .title-icon svg {
+    width: 100%;
+    height: 100%;
   }
 
   .panel-header p {
@@ -377,28 +442,7 @@
 
   .pairing-footer {
     display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 16px;
-  }
-
-  .secondary-btn {
-    background: transparent;
-    border: 1px solid #2F3138;
-    color: #C5C4DD;
-    outline: none;
-    padding: 10px 16px;
-    border-radius: 10px;
-    font-size: 13px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.2s ease;
-  }
-
-  .secondary-btn:hover {
-    border-color: #A4B4FF;
-    color: #E3E3E6;
-    background-color: #1F2128;
+    justify-content: center;
   }
 
   /* Dashboard Core (Sidebar & Content) */
@@ -421,14 +465,26 @@
   .logo-area {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 12px;
     margin-bottom: 32px;
     padding-left: 8px;
   }
 
-  .logo-icon {
-    font-size: 20px;
+  .logo-mark {
+    width: 36px;
+    height: 36px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 12px;
+    background-color: #151821;
     color: #A4B4FF;
+    box-shadow: inset 0 0 0 1px #252834;
+  }
+
+  .logo-mark svg {
+    width: 20px;
+    height: 20px;
   }
 
   .logo-area h3 {
@@ -444,6 +500,9 @@
   }
 
   .nav-btn {
+    display: flex;
+    align-items: center;
+    gap: 10px;
     background: none;
     border: none;
     outline: none;
@@ -455,6 +514,12 @@
     font-weight: 500;
     cursor: pointer;
     transition: all 0.2s ease;
+  }
+
+  .nav-icon {
+    width: 18px;
+    height: 18px;
+    flex: 0 0 18px;
   }
 
   .nav-btn:hover {
@@ -473,6 +538,12 @@
     padding: 32px;
     overflow-y: auto;
     box-sizing: border-box;
+  }
+
+  .content-area.content-area-centered {
+    display: flex;
+    align-items: center;
+    justify-content: center;
   }
 
   .content-header {
@@ -503,8 +574,15 @@
   }
 
   .empty-icon {
-    font-size: 48px;
+    width: 52px;
+    height: 52px;
     margin-bottom: 16px;
+    color: #A4B4FF;
+  }
+
+  .empty-icon svg {
+    width: 100%;
+    height: 100%;
   }
 
   .empty-state p {
@@ -573,7 +651,16 @@
   }
 
   .play-icon {
-    font-size: 24px;
+    width: 28px;
+    height: 28px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .play-icon svg {
+    width: 100%;
+    height: 100%;
   }
 
   .video-badge {
