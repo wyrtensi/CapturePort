@@ -1,0 +1,53 @@
+name: Bug Report
+description: File a structured report to help us reproduce and fix an issue.
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please provide clear details of the bug. Verify that the bug has not been reported already.
+  - type: input
+    id: summary
+    attributes:
+      label: Brief Summary
+      placeholder: E.g., App crashes during QR code scanning on Android 14
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Affected Component / Platform
+      options:
+        - PC - Windows
+        - PC - macOS
+        - PC - Linux
+        - Android Client
+        - Protocol / WebSocket API
+        - MCP Server
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to Reproduce
+      description: List the exact steps to trigger the bug.
+      placeholder: |
+        1. Open the Android application.
+        2. Click on "+ Add PC".
+        3. Scan the QR code displayed on the PC.
+        4. See crash.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      placeholder: Describe what should have happened.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Log Output & Context
+      description: Attach relevant terminal output, Rust logs, or logcat traces.
+      render: shell

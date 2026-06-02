@@ -1,0 +1,47 @@
+pub mod envelope;
+pub mod handler;
+
+use axum::{
+    routing::get,
+    Router,
+    extract::{ws::WebSocketUpgrade, State},
+    response::IntoResponse,
+};
+use std::net::SocketAddr;
+use crate::state::AppState;
+use crate::ws::handler::SocketHandler;
+use anyhow::{Result, Context};
+
+pub struct WsServer;
+
+impl WsServer {
+    // Starts the axum web server running in the background on LAN
+    pub async fn start(state: AppState, app_handle: Option<tauri::AppHandle>, port: u16) -> Result<()> {
+        let app = Router::new()
+            .route("/ws", get(ws_handler))
+            .with_state((state, app_handle));
+
+        let addr = SocketAddr::from(([0, 0, 0, 0], port));
+        
+        let listener = tokio::net::TcpListener::bind(addr).await
+            .context(format!("Failed to bind TcpListener on port {}", port))?;
+            
+        tracing::info!("Axum WebSocket server listening on local network: {}", addr);
+        
+        // Run axum server in a spawned Tokio background context
+        tokio::spawn(async move {
+            if let Err(e) = axum::serve(listener, app).await {
+                tracing::error!("Axum server runtime error: {:?}", e);
+            }
+        });
+
+        Ok(())
+    }
+}
+
+async fn ws_handler(
+    ws: WebSocketUpgrade,
+    State((state, app_handle)): State<(AppState, Option<tauri::AppHandle>)>,
+) -> impl IntoResponse {
+    ws.on_upgrade(move |socket| SocketHandler::handle_socket(socket, state, app_handle))
+}

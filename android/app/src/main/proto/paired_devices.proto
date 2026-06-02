@@ -1,0 +1,20 @@
+syntax = "proto3";
+option java_package = "dev.captureport.app.data";
+option java_multiple_files = true;
+
+message PairedDevice {
+  string id           = 1;  // UUID
+  string name         = 2;
+  string os           = 3;  // "windows" | "macos" | "linux"
+  string host         = 4;
+  int32  port         = 5;
+  string token        = 6;
+  bytes  public_key   = 7;  // Stored natively as raw bytes
+  int64  last_seen_ms = 8;
+  bool   pinned       = 9;
+}
+
+message PairedDevices {
+  repeated PairedDevice devices = 1;
+  string selected_id           = 2;
+}

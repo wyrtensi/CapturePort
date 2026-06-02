@@ -1,0 +1,52 @@
+# ─── OS ───
+.DS_Store
+Thumbs.db
+desktop.ini
+ehthumbs.db
+ehthumbs_vista.db
+$RECYCLE.BIN/
+
+# ─── IDE / editors ───
+.idea/
+.vscode/
+*.iml
+*.swp
+*.swo
+*~
+*.bak
+.cache/
+.history/
+
+# ─── Secrets / local config ───
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
+local.properties
+
+# ─── Tauri / Rust ───
+pc/src-tauri/target/
+pc/src-tauri/gen/schemas/
+pc/src-tauri/WixTools/
+pc/src-tauri/.cargo/
+pc/ui/node_modules/
+pc/ui/dist/
+pc/ui/.svelte-kit/
+pc/ui/build/
+
+# Cargo.lock is committed (it's a binary application)
+
+# ─── Android / Gradle ───
+android/.gradle/
+android/build/
+android/app/build/
+android/app/release/
+android/app/captures/
+android/app/.cxx/
+android/local.properties
+android/keystore.properties
+android/app/*.keystore

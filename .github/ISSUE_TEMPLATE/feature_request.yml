@@ -1,0 +1,36 @@
+name: Feature Request
+description: Propose an enhancement or a new capability for CapturePort.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Suggesting a feature? We want to hear how it solves real development or capture bottlenecks.
+  - type: input
+    id: title
+    attributes:
+      label: Feature Title
+      placeholder: E.g., Autostart Android service on specific Wi-Fi network connection
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem Statement
+      description: Describe the friction or limitation this feature addresses.
+      placeholder: E.g., Currently, I have to manually open the Android app whenever I change locations...
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed Solution
+      description: Describe how the new feature should work.
+      placeholder: Integrate an SSID background listener to trigger discovery when matched...
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternative Solutions Considered
+      placeholder: Describe any workarounds you have considered.
