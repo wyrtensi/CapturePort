@@ -67,7 +67,7 @@ sequenceDiagram
 
 ---
 
-## 🔒 Security Hardening
+## Security Hardening
 
 CapturePort is engineered from the ground up for strict local privacy:
 
@@ -79,7 +79,7 @@ CapturePort is engineered from the ground up for strict local privacy:
 
 ---
 
-## 🤖 Model Context Protocol (MCP) Setup
+## Model Context Protocol (MCP) Setup
 
 CapturePort acts as an MCP server, empowering AI tools with vision (real-time camera feeds) and clipboard access on your machine.
 
@@ -119,7 +119,7 @@ Cursor connects to MCP servers using Server-Sent Events (SSE). The CapturePort d
 
 ---
 
-## 🛠️ Development Setup
+## Development Setup
 
 Ensure you have installed Node.js (v20+), Rust stable, and the Android SDK.
 
@@ -149,7 +149,7 @@ cd android
 
 ---
 
-## 📦 Automated Release Pipeline (CI/CD)
+## Automated Release Pipeline (CI/CD)
 
 Every push or pull request on `main` initiates a dual-validation pipeline:
 
@@ -168,6 +168,6 @@ Both pipelines publish their corresponding artifacts directly to the same **GitH
 
 ---
 
-## 📄 License
+## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.

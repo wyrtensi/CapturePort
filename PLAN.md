@@ -561,9 +561,9 @@ tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
 - Иконка: `tray-icon` (32×32 PNG), `icon_as_template(true)` на macOS.
 - Левая кнопка → окно «Активность» (последние 20 медиа с превью).
 - Правая кнопка → меню:
-  - 📱 Pair new device…  (открывает окно с QR)
-  - 📂 Open received folder (`~/Pictures/CapturePort/<дата>/`)
-  - ⚙ Settings…  (имя устройства, порт, MCP вкл/выкл, автозапуск, язык)
+  -  Pair new device…  (открывает окно с QR)
+  -  Open received folder (`~/Pictures/CapturePort/<дата>/`)
+  -  Settings…  (имя устройства, порт, MCP вкл/выкл, автозапуск, язык)
   - ── separator ──
   - ⏻ Quit
 
