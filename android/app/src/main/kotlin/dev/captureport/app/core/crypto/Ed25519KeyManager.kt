@@ -2,6 +2,8 @@ package dev.captureport.app.core.crypto
 
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
+import android.util.Log
+import java.io.File
 import java.security.KeyFactory
 import java.security.KeyPair
 import java.security.KeyPairGenerator
@@ -9,6 +11,7 @@ import java.security.KeyStore
 import java.security.PrivateKey
 import java.security.PublicKey
 import java.security.Signature
+import java.security.spec.PKCS8EncodedKeySpec
 import java.security.spec.X509EncodedKeySpec
 
 object Ed25519KeyManager {
@@ -31,22 +34,75 @@ object Ed25519KeyManager {
         0x00
     )
 
-    // Generates or retrieves the Ed25519 keypair inside AndroidKeyStore (API 33+)
+    private var softwareKeyPair: KeyPair? = null
+
+    private fun getOrGenerateSoftwareKeyPair(): KeyPair {
+        synchronized(this) {
+            softwareKeyPair?.let { return it }
+
+            val filesDir = dev.captureport.app.CapturePortApp.instance.filesDir
+            val privFile = File(filesDir, "captureport_ed25519_priv.key")
+            val pubFile = File(filesDir, "captureport_ed25519_pub.key")
+
+            if (privFile.exists() && pubFile.exists()) {
+                try {
+                    val privBytes = privFile.readBytes()
+                    val pubBytes = pubFile.readBytes()
+
+                    val kf = KeyFactory.getInstance(ALGORITHM)
+                    val privKey = kf.generatePrivate(PKCS8EncodedKeySpec(privBytes))
+                    val pubKey = kf.generatePublic(X509EncodedKeySpec(pubBytes))
+
+                    val kp = KeyPair(pubKey, privKey)
+                    softwareKeyPair = kp
+                    return kp
+                } catch (e: Throwable) {
+                    Log.e("Ed25519KeyManager", "Failed to load stored software keypair: ${e.message}", e)
+                    privFile.delete()
+                    pubFile.delete()
+                }
+            }
+
+            // Generate a new software keypair
+            try {
+                val kpg = KeyPairGenerator.getInstance(ALGORITHM)
+                val kp = kpg.generateKeyPair()
+                
+                privFile.writeBytes(kp.private.encoded)
+                pubFile.writeBytes(kp.public.encoded)
+
+                softwareKeyPair = kp
+                Log.i("Ed25519KeyManager", "Successfully generated and stored a software Ed25519 keypair as fallback")
+                return kp
+            } catch (e: Throwable) {
+                Log.e("Ed25519KeyManager", "Failed to generate software Ed25519 keypair: ${e.message}", e)
+                throw e
+            }
+        }
+    }
+
+    // Generates or retrieves the Ed25519 keypair inside AndroidKeyStore (API 33+) with software fallback
     @Synchronized
     fun getOrCreateKeyPair(): KeyPair {
-        val keyStore = KeyStore.getInstance(KEY_PROVIDER).apply { load(null) }
+        try {
+            val keyStore = KeyStore.getInstance(KEY_PROVIDER).apply { load(null) }
 
-        loadUsableKeyPair(keyStore, KEY_ALIAS)?.let { return it }
-        loadUsableKeyPair(keyStore, LEGACY_KEY_ALIAS)?.let { return it }
+            loadUsableKeyPair(keyStore, KEY_ALIAS)?.let { return it }
+            loadUsableKeyPair(keyStore, LEGACY_KEY_ALIAS)?.let { return it }
 
-        deleteAliasIfExists(keyStore, KEY_ALIAS)
-        val keyPair = generateKeyPair(KEY_ALIAS)
-        if (isStructurallyUsable(keyPair)) {
-            return keyPair
+            deleteAliasIfExists(keyStore, KEY_ALIAS)
+            val keyPair = generateKeyPair(KEY_ALIAS)
+            if (isStructurallyUsable(keyPair)) {
+                return keyPair
+            }
+
+            deleteAliasIfExists(keyStore, KEY_ALIAS)
+        } catch (e: Throwable) {
+            Log.w("Ed25519KeyManager", "AndroidKeyStore initialization failed, falling back to software key: ${e.message}", e)
         }
 
-        deleteAliasIfExists(keyStore, KEY_ALIAS)
-        error("Failed to generate a valid Ed25519 key pair in AndroidKeyStore")
+        // Software fallback
+        return getOrGenerateSoftwareKeyPair()
     }
 
     private fun loadUsableKeyPair(keyStore: KeyStore, alias: String): KeyPair? {
@@ -172,6 +228,6 @@ object Ed25519KeyManager {
     fun getRawPublicKey(): ByteArray {
         val keyPair = getOrCreateKeyPair()
         return extractRawPublicKey(keyPair.public)
-            ?: error("Failed to extract raw Ed25519 public key from AndroidKeyStore")
+            ?: error("Failed to extract raw Ed25519 public key")
     }
 }
