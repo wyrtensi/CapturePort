@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.6] - 2026-06-02
+### Fixed
+- Android pairing now validates that the exported Ed25519 public key actually matches the private key in AndroidKeyStore, and regenerates stale incompatible entries that previously caused `Fingerprint mismatch` pairing failures.
+- Android build system now forces using JDK 21 from Android Studio to avoid Kotlin compiler daemon crashes with JDK 25.
+- Added detailed cryptographic tracing logs to the Windows WebSocket handler to simplify diagnostics during signature validation failures.
+
 ## [0.1.5] - 2026-06-02
 ### Fixed
 - Android pairing QR payloads now advertise multiple candidate LAN addresses, and the phone retries them sequentially so host-only adapters such as `192.168.56.1` no longer block pairing on multi-OS setups.

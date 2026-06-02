@@ -175,23 +175,48 @@ impl SocketHandler {
                                 .and_then(|s| s.as_str());
 
                             let verified = if let Some(s) = sig_str {
-                                if let Ok(sig_bytes) = BASE64_URL_SAFE_NO_PAD.decode(s) {
-                                    if sig_bytes.len() == 64 {
-                                        let signature = Signature::from_slice(&sig_bytes);
-                                        let verifying_key = VerifyingKey::from_bytes(&state_pair.pubkey_phone);
-                                        
-                                        if let (Ok(sig), Ok(key)) = (signature, verifying_key) {
-                                            key.verify(&state_pair.nonce_pc, &sig).is_ok()
+                                match BASE64_URL_SAFE_NO_PAD.decode(s) {
+                                    Ok(sig_bytes) => {
+                                        if sig_bytes.len() == 64 {
+                                            let signature = Signature::from_slice(&sig_bytes);
+                                            let verifying_key = VerifyingKey::from_bytes(&state_pair.pubkey_phone);
+                                            
+                                            match (signature, verifying_key) {
+                                                (Ok(sig), Ok(key)) => {
+                                                    match key.verify(&state_pair.nonce_pc, &sig) {
+                                                        Ok(_) => true,
+                                                        Err(e) => {
+                                                            let nonce_hex: String = state_pair.nonce_pc.iter().map(|b| format!("{:02x}", b)).collect();
+                                                            let pubkey_hex: String = state_pair.pubkey_phone.iter().map(|b| format!("{:02x}", b)).collect();
+                                                            let sig_hex: String = sig_bytes.iter().map(|b| format!("{:02x}", b)).collect();
+                                                            tracing::error!(
+                                                                "Handshake: Ed25519 signature verification failed: {:?}. Nonce (hex): {}, Public key (hex): {}, Signature (hex): {}", 
+                                                                e, 
+                                                                nonce_hex, 
+                                                                pubkey_hex, 
+                                                                sig_hex
+                                                            );
+                                                            false
+                                                        }
+                                                    }
+                                                }
+                                                (sig_err, key_err) => {
+                                                    tracing::error!("Handshake: failed to parse signature or public key: sig_err={:?}, key_err={:?}", sig_err, key_err);
+                                                    false
+                                                }
+                                            }
                                         } else {
+                                            tracing::error!("Handshake: signature length is not 64: {}", sig_bytes.len());
                                             false
                                         }
-                                    } else {
+                                    }
+                                    Err(e) => {
+                                        tracing::error!("Handshake: failed to decode base64 signature: {:?}", e);
                                         false
                                     }
-                                } else {
-                                    false
                                 }
                             } else {
+                                tracing::error!("Handshake: signature parameter 'sig' not provided in challenge response");
                                 false
                             };
 
