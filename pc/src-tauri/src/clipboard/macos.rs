@@ -1,9 +1,8 @@
 use std::path::Path;
 use anyhow::{Result, Context};
 use crate::clipboard::ClipboardSink;
-use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
-use objc2_app_kit::{NSPasteboard, NSPasteboardWriting};
+use objc2_app_kit::NSPasteboard;
 use objc2_foundation::{NSArray, NSString, NSURL};
 
 pub struct MacosSink;
@@ -11,6 +10,12 @@ pub struct MacosSink;
 impl MacosSink {
     pub fn new() -> Self {
         Self
+    }
+}
+
+impl Default for MacosSink {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -33,15 +38,14 @@ impl ClipboardSink for MacosSink {
     fn put_file(&self, path: &Path) -> Result<()> {
         let abs_path = std::fs::canonicalize(path)?;
         let path_str = abs_path.to_string_lossy().to_string();
-        
+
         objc2::rc::autoreleasepool(|_| unsafe {
             let pboard = NSPasteboard::generalPasteboard();
             pboard.clearContents();
             let ns_path = NSString::from_str(&path_str);
-            let ns_url = NSURL::fileURLWithPath(&ns_path)
-                .ok_or_else(|| anyhow::anyhow!("Failed to create file URL for path: {}", path_str))?;
-            
-            // Correctly cast the Retained<NSURL> to Retained<ProtocolObject<dyn NSPasteboardWriting>>
+            let ns_url = NSURL::fileURLWithPath(&ns_path);
+
+            // Cast the Retained<NSURL> to Retained<ProtocolObject<dyn NSPasteboardWriting>>
             let protocol_obj = ProtocolObject::from_retained(ns_url);
             let objects = NSArray::from_retained_slice(&[protocol_obj]);
             let success = pboard.writeObjects(&objects);
