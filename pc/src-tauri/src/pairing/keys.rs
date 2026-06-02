@@ -1,4 +1,4 @@
-use ed25519_dalek::{SigningKey, VerifyingKey};
+use ed25519_dalek::SigningKey;
 use keyring::Entry;
 use base64::prelude::*;
 use anyhow::{Result, Context};

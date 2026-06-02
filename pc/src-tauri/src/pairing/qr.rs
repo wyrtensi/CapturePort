@@ -1,7 +1,7 @@
 use qrcodegen::{QrCode, QrCodeEcc};
 use ed25519_dalek::{SigningKey, Signer};
 use base64::prelude::*;
-use anyhow::{Result, Context};
+use anyhow::Result;
 use std::net::UdpSocket;
 
 pub struct QrGenerator;

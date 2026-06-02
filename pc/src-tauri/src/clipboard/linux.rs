@@ -2,6 +2,7 @@ use std::path::Path;
 use anyhow::{Result, Context};
 use crate::clipboard::ClipboardSink;
 
+#[derive(Default)]
 pub struct LinuxSink;
 
 impl LinuxSink {

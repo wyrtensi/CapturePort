@@ -14,6 +14,7 @@ impl TrayManager {
             let _ = window.show();
             let _ = window.set_focus();
         } else {
+            #[allow(unused_mut)]
             let mut builder = WebviewWindowBuilder::new(app, label, WebviewUrl::App("/".into()))
                 .title(title)
                 .inner_size(width, height)
@@ -59,9 +60,9 @@ impl TrayManager {
 
     // Creates the system-tray context menu and binds event listeners
     pub fn create_tray<R: Runtime>(app: &AppHandle<R>) -> Result<()> {
-        let pair = MenuItem::with_id(app, "pair", "📱 Pair new device...", true, None::<&str>)?;
-        let open_folder = MenuItem::with_id(app, "open_folder", "📂 Open received folder", true, None::<&str>)?;
-        let settings = MenuItem::with_id(app, "settings", "⚙ Settings...", true, None::<&str>)?;
+        let pair = MenuItem::with_id(app, "pair", "Pair new device...", true, None::<&str>)?;
+        let open_folder = MenuItem::with_id(app, "open_folder", "Open received folder", true, None::<&str>)?;
+        let settings = MenuItem::with_id(app, "settings", "Settings...", true, None::<&str>)?;
         let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
 
         let menu = Menu::with_items(

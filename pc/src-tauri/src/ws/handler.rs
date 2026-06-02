@@ -1,13 +1,11 @@
 use axum::extract::ws::{Message, WebSocket};
 use futures_util::{StreamExt, SinkExt};
-use std::sync::Arc;
 use std::time::SystemTime;
 use base64::prelude::*;
-use ed25519_dalek::{VerifyingKey, Signature, SignatureError, Verifier};
+use ed25519_dalek::{VerifyingKey, Signature, Verifier};
 use serde_json::json;
-use anyhow::{Result, Context};
-use crate::state::{AppState, DeviceInfo, MediaItem, WsSession};
-use crate::ws::envelope::{Envelope, BinaryFrame, ErrorPayload};
+use crate::state::{AppState, DeviceInfo, MediaItem};
+use crate::ws::envelope::{Envelope, BinaryFrame};
 use crate::clipboard::{get_platform_sink, ClipboardSink};
 use tauri::Emitter;
 
@@ -31,7 +29,7 @@ impl SocketHandler {
         let (tx, mut rx) = tokio::sync::mpsc::channel::<Message>(100);
 
         // Spawn a background task to write outgoing messages from our channel to the WebSocket
-        let mut sender_task = tokio::spawn(async move {
+        let sender_task = tokio::spawn(async move {
             while let Some(msg) = rx.recv().await {
                 if sender.send(msg).await.is_err() {
                     break;
@@ -44,6 +42,7 @@ impl SocketHandler {
 
         // Reading WebSocket messages loop
         while let Some(Ok(msg)) = receiver.next().await {
+            #[allow(clippy::collapsible_match)]
             match msg {
                 Message::Text(text) => {
                     let envelope: Envelope = match serde_json::from_str(&text) {
@@ -267,7 +266,7 @@ impl SocketHandler {
                 }
                 Message::Binary(bytes) => {
                     // PROCESS BINARY TRANSMISSION
-                    if let Some(device_id) = &authenticated_device_id {
+                    if authenticated_device_id.is_some() {
                         if let Ok(frame) = BinaryFrame::decode(&bytes) {
                             match frame.stream_id {
                                 0 => {

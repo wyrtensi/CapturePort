@@ -1,4 +1,3 @@
-use std::io::{self, BufRead};
 use serde_json::{json, Value};
 use tokio::time::timeout;
 use std::time::Duration;
@@ -60,7 +59,7 @@ impl McpServer {
         let id = req.get("id").cloned().unwrap_or(Value::Null);
         
         // Structural validation for Invalid Request (-32600)
-        if !req.is_object() || (!req.get("method").is_some() && req.get("id").is_some()) {
+        if !req.is_object() || (req.get("method").is_none() && req.get("id").is_some()) {
             return json!({
                 "jsonrpc": "2.0",
                 "error": {

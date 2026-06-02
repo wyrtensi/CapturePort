@@ -9,7 +9,7 @@ pub mod clipboard;
 pub mod mcp;
 pub mod mdns;
 
-use tauri::{AppHandle, Manager, Runtime};
+use tauri::Manager;
 use serde_json::json;
 use crate::state::AppState;
 use crate::pairing::qr::QrGenerator;
