@@ -1,6 +1,6 @@
 [package]
 name = "pc"
-version = "0.1.3"
+version = "0.1.4"
 description = "CapturePort PC Tray App & MCP Server"
 authors = ["wyrtensi"]
 edition = "2021"
@@ -23,6 +23,7 @@ axum = { version = "0.7", features = ["ws"] }
 tokio = { version = "1", features = ["full"] }
 futures-util = "0.3"
 mdns-sd = "0.20"
+if-addrs = "0.15"
 
 # Security & Crypto
 ed25519-dalek = { version = "2", features = ["rand_core"] }

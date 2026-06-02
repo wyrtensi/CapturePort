@@ -14,10 +14,13 @@ import androidx.camera.video.Recording
 import androidx.camera.video.QualitySelector
 import androidx.camera.video.Quality
 import androidx.core.content.ContextCompat
+import com.google.mlkit.vision.barcode.BarcodeScanner
 import com.google.mlkit.vision.barcode.BarcodeScanning
 import com.google.mlkit.vision.common.InputImage
 import java.io.File
 import java.util.concurrent.Executor
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 
 class CameraController(private val context: Context) {
 
@@ -32,6 +35,10 @@ class CameraController(private val context: Context) {
 
     private var activeRecording: Recording? = null
     private val mainExecutor: Executor = ContextCompat.getMainExecutor(context)
+    private val analysisExecutor = Executors.newSingleThreadExecutor()
+    private val barcodeScanner: BarcodeScanner = BarcodeScanning.getClient()
+    private val qrScanningActive = AtomicBoolean(false)
+    private val scanInFlight = AtomicBoolean(false)
 
     // Snap photo using CameraX ImageCapture pipeline
     fun takePhoto(
@@ -87,29 +94,43 @@ class CameraController(private val context: Context) {
     // Set real-time ML Kit QR scanner analyzer inside the CameraX ImageAnalysis pipeline
     @OptIn(ExperimentalGetImage::class)
     fun startQrScanning(onQrCodeScanned: (String) -> Unit) {
+        stopQrScanning()
+        qrScanningActive.set(true)
+
         cameraController.setImageAnalysisAnalyzer(
-            mainExecutor
+            analysisExecutor
         ) { imageProxy ->
+            if (!qrScanningActive.get() || !scanInFlight.compareAndSet(false, true)) {
+                imageProxy.close()
+                return@setImageAnalysisAnalyzer
+            }
+
             val mediaImage = imageProxy.image
             if (mediaImage != null) {
                 val inputImage = InputImage.fromMediaImage(
                     mediaImage,
                     imageProxy.imageInfo.rotationDegrees
                 )
-                val scanner = BarcodeScanning.getClient()
-                scanner.process(inputImage)
+                barcodeScanner.process(inputImage)
                     .addOnSuccessListener { barcodes ->
+                        if (!qrScanningActive.get()) {
+                            return@addOnSuccessListener
+                        }
+
                         for (barcode in barcodes) {
                             val raw = barcode.rawValue
-                            if (raw != null && raw.startsWith("captureport://pair")) {
+                            if (raw != null && raw.startsWith("captureport://pair") && qrScanningActive.compareAndSet(true, false)) {
                                 onQrCodeScanned(raw)
+                                break
                             }
                         }
                     }
                     .addOnCompleteListener {
+                        scanInFlight.set(false)
                         imageProxy.close()
                     }
             } else {
+                scanInFlight.set(false)
                 imageProxy.close()
             }
         }
@@ -117,6 +138,15 @@ class CameraController(private val context: Context) {
 
     // Unregisters analysis callbacks to stop scanning
     fun stopQrScanning() {
+        qrScanningActive.set(false)
         cameraController.clearImageAnalysisAnalyzer()
+    }
+
+    fun release() {
+        stopQrScanning()
+        stopVideoRecording()
+        barcodeScanner.close()
+        analysisExecutor.shutdownNow()
+        cameraController.unbind()
     }
 }

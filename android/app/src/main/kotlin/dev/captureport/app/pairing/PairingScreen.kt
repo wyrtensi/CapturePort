@@ -45,22 +45,34 @@ fun PairingScreen(
         }
     }
 
+    LaunchedEffect(Unit) {
+        isScanned = false
+        viewModel.resetScanning()
+    }
+
     val scanCallback: (String) -> Unit = { rawUrl ->
         if (!isScanned) {
             isScanned = true
             cameraController.stopQrScanning()
-            
-            // Parse URI parameters
-            val uri = Uri.parse(rawUrl)
-            val host = uri.getQueryParameter("host") ?: ""
-            val port = uri.getQueryParameter("port")?.toIntOrNull() ?: 7878
-            val pk = uri.getQueryParameter("pk") ?: ""
-            val name = uri.getQueryParameter("name") ?: ""
-            val os = uri.getQueryParameter("os") ?: ""
-            val nonce = uri.getQueryParameter("nonce") ?: ""
-            val sig = uri.getQueryParameter("sig") ?: ""
 
-            viewModel.startPairing(context, host, port, pk, name, os, nonce, sig)
+            val uri = runCatching { Uri.parse(rawUrl) }.getOrNull()
+            if (uri == null || uri.scheme != "captureport" || uri.host != "pair") {
+                viewModel.showError("Invalid pairing QR. Regenerate the QR code on your PC and scan again.")
+            } else {
+                val host = uri.getQueryParameter("host") ?: ""
+                val port = uri.getQueryParameter("port")?.toIntOrNull() ?: -1
+                val pk = uri.getQueryParameter("pk") ?: ""
+                val name = uri.getQueryParameter("name") ?: ""
+                val os = uri.getQueryParameter("os") ?: ""
+                val nonce = uri.getQueryParameter("nonce") ?: ""
+                val sig = uri.getQueryParameter("sig") ?: ""
+
+                if (host.isBlank() || port !in 1..65535 || pk.isBlank() || nonce.isBlank() || sig.isBlank()) {
+                    viewModel.showError("Invalid pairing QR. Regenerate the QR code on your PC and scan again.")
+                } else {
+                    viewModel.startPairing(host, port, pk, name, os, nonce, sig)
+                }
+            }
         }
     }
 
@@ -71,8 +83,7 @@ fun PairingScreen(
 
     DisposableEffect(Unit) {
         onDispose {
-            cameraController.stopQrScanning()
-            cameraController.cameraController.unbind()
+            cameraController.release()
         }
     }
 
@@ -224,8 +235,8 @@ fun PairingScreen(
                                 Button(
                                     onClick = {
                                         isScanned = false
+                                        viewModel.resetScanning()
                                         cameraController.startQrScanning(scanCallback)
-                                        viewModel.startPairing(context, "", 0, "", "", "", "", "") // Reset view state
                                     },
                                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF44464F)),
                                     modifier = Modifier.fillMaxWidth().height(48.dp)

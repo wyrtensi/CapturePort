@@ -1,6 +1,5 @@
 package dev.captureport.app.pairing
 
-import android.content.Context
 import android.os.Build
 import android.util.Base64
 import android.util.Log
@@ -43,9 +42,20 @@ class PairingViewModel(
 
     private var pairingSocket: WebSocket? = null
 
+    fun resetScanning() {
+        pairingSocket?.cancel()
+        pairingSocket = null
+        _uiState.value = PairingState.Scanning
+    }
+
+    fun showError(message: String) {
+        pairingSocket?.cancel()
+        pairingSocket = null
+        _uiState.value = PairingState.Error(message)
+    }
+
     // Starts challenge-response handshake sequence from QR parameters
     fun startPairing(
-        context: Context,
         host: String,
         port: Int,
         pcPublicKeyB64: String,
@@ -54,15 +64,28 @@ class PairingViewModel(
         pcNonceB64: String,
         pcSigB64: String
     ) {
+        if (host.isBlank() || port !in 1..65535 || pcPublicKeyB64.isBlank() || pcNonceB64.isBlank() || pcSigB64.isBlank()) {
+            showError("Invalid pairing QR. Regenerate the QR code on your PC and scan again.")
+            return
+        }
+
+        pairingSocket?.cancel()
+        pairingSocket = null
         _uiState.value = PairingState.Connecting
         
         viewModelScope.launch(Dispatchers.IO) {
             val phonePubKey = Ed25519KeyManager.getRawPublicKey()
             val phonePubKeyB64 = Base64.encodeToString(phonePubKey, Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
 
-            val request = Request.Builder()
-                .url("ws://$host:$port/ws")
-                .build()
+            val request = try {
+                Request.Builder()
+                    .url("ws://$host:$port/ws")
+                    .build()
+            } catch (e: IllegalArgumentException) {
+                Log.e("PairingViewModel", "Invalid pairing URL: ${e.message}")
+                _uiState.value = PairingState.Error("Invalid pairing address. Regenerate the QR code on your PC and scan again.")
+                return@launch
+            }
 
             val listener = object : WebSocketListener() {
                 override fun onOpen(webSocket: WebSocket, response: Response) {
@@ -133,6 +156,7 @@ class PairingViewModel(
                                         repository.addDevice(newDevice)
                                         _uiState.value = PairingState.Success
                                         webSocket.close(1000, "Pairing success")
+                                        pairingSocket = null
                                     }
                                 }
                             }
@@ -148,7 +172,8 @@ class PairingViewModel(
                 }
 
                 override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                    _uiState.value = PairingState.Error("Network failure connecting: ${t.message}")
+                    pairingSocket = null
+                    _uiState.value = PairingState.Error("Network failure connecting: ${t.message ?: "unknown error"}")
                 }
             }
 
@@ -158,6 +183,7 @@ class PairingViewModel(
 
     override fun onCleared() {
         super.onCleared()
-        pairingSocket?.close(1000, "ViewModel cleared")
+        pairingSocket?.cancel()
+        pairingSocket = null
     }
 }

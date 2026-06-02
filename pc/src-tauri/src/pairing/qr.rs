@@ -2,16 +2,100 @@ use qrcodegen::{QrCode, QrCodeEcc};
 use ed25519_dalek::{SigningKey, Signer};
 use base64::prelude::*;
 use anyhow::Result;
-use std::net::UdpSocket;
+use if_addrs::{get_if_addrs, IfAddr};
+use std::net::{IpAddr, Ipv4Addr, UdpSocket};
 
 pub struct QrGenerator;
 
 impl QrGenerator {
-    // Utility to get the PC's primary LAN IP (by simulating a UDP connect to a public IP)
+    // Utility to get the PC's preferred LAN IP for mobile pairing.
     pub fn get_local_ip() -> Option<String> {
+        let mut private_fallback = None;
+        let mut general_fallback = None;
+
+        if let Ok(ifaces) = get_if_addrs() {
+            for iface in ifaces {
+                let ip = match iface.addr {
+                    IfAddr::V4(v4) => v4.ip,
+                    _ => continue,
+                };
+
+                if !Self::is_usable_ipv4(ip) {
+                    continue;
+                }
+
+                let ip_string = ip.to_string();
+                let is_virtual = Self::is_virtual_interface_name(&iface.name);
+
+                if ip.is_private() && !is_virtual {
+                    return Some(ip_string);
+                }
+
+                if ip.is_private() && private_fallback.is_none() {
+                    private_fallback = Some(ip_string.clone());
+                }
+
+                if !is_virtual && general_fallback.is_none() {
+                    general_fallback = Some(ip_string);
+                }
+            }
+        }
+
+        private_fallback
+            .or(general_fallback)
+            .or_else(Self::legacy_routed_ip)
+    }
+
+    fn legacy_routed_ip() -> Option<String> {
         let socket = UdpSocket::bind("0.0.0.0:0").ok()?;
         socket.connect("8.8.8.8:80").ok()?;
-        socket.local_addr().ok().map(|addr| addr.ip().to_string())
+        match socket.local_addr().ok()?.ip() {
+            IpAddr::V4(ip) if Self::is_usable_ipv4(ip) => Some(ip.to_string()),
+            _ => None,
+        }
+    }
+
+    fn is_usable_ipv4(ip: Ipv4Addr) -> bool {
+        let [a, b, c, _] = ip.octets();
+
+        if ip.is_unspecified() || ip.is_loopback() || ip.is_link_local() || ip.is_broadcast() || ip.is_multicast() {
+            return false;
+        }
+
+        if a == 100 && (64..=127).contains(&b) {
+            return false;
+        }
+
+        if a == 198 && (b == 18 || b == 19) {
+            return false;
+        }
+
+        if (a, b, c) == (192, 0, 2) || (a, b, c) == (198, 51, 100) || (a, b, c) == (203, 0, 113) {
+            return false;
+        }
+
+        true
+    }
+
+    fn is_virtual_interface_name(name: &str) -> bool {
+        let lowered = name.to_ascii_lowercase();
+        [
+            "loopback",
+            "vethernet",
+            "hyper-v",
+            "docker",
+            "wsl",
+            "vmware",
+            "virtualbox",
+            "vpn",
+            "tun",
+            "tap",
+            "tailscale",
+            "zerotier",
+            "bridge",
+        ]
+        .iter()
+        .any(|needle| lowered.contains(needle))
     }
 
     // Creates the pairing URL and renders it as an SVG data URL

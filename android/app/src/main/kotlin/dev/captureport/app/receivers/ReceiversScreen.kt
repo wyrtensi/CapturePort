@@ -87,7 +87,7 @@ fun ReceiversScreen(
             lifecycleOwner.lifecycle.removeObserver(observer)
             app.isCameraScreenVisible = false
             app.activeCameraController = null
-            cameraController.cameraController.unbind()
+            cameraController.release()
         }
     }
 
@@ -198,19 +198,20 @@ fun ReceiversScreen(
 
             Spacer(modifier = Modifier.weight(1f))
 
-            // Add Device button
-            IconButton(
-                onClick = onNavigateToPairing,
-                colors = IconButtonDefaults.iconButtonColors(containerColor = Color(0xD91F2128)),
-                modifier = Modifier
-                    .size(44.dp)
-                    .border(1.dp, Color(0xFF2C2E35), CircleShape)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Add,
-                    contentDescription = "Pair Receiver",
-                    tint = Color.White
-                )
+            if (pairedDevices.isNotEmpty()) {
+                IconButton(
+                    onClick = onNavigateToPairing,
+                    colors = IconButtonDefaults.iconButtonColors(containerColor = Color(0xD91F2128)),
+                    modifier = Modifier
+                        .size(44.dp)
+                        .border(1.dp, Color(0xFF2C2E35), CircleShape)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Add,
+                        contentDescription = "Pair Receiver",
+                        tint = Color.White
+                    )
+                }
             }
         }
 
