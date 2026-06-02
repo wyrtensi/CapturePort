@@ -74,15 +74,19 @@ class MainActivity : ComponentActivity() {
             app.wsClient = WsClient(
                 context = applicationContext,
                 scope = app.applicationScope,
-                onCaptureRequest = { onPhotoSnapped ->
+                onCaptureRequest = { onPhotoSnapped, onCaptureRejected ->
                     val activeCam = app.activeCameraController
-                    if (activeCam != null) {
+                    if (app.canServeRemoteCameraCapture() && activeCam != null) {
                         activeCam.takePhoto(
                             onSuccess = { file -> onPhotoSnapped(file) },
-                            onError = { err -> Log.e("MainActivity", "MCP photo snap failed: ${err.message}") }
+                            onError = { err ->
+                                Log.e("MainActivity", "MCP photo snap failed: ${err.message}")
+                                onCaptureRejected("camera capture failed")
+                            }
                         )
                     } else {
-                        Log.e("MainActivity", "No active camera controller found for MCP photo capture!")
+                        Log.w("MainActivity", "Remote camera capture rejected: camera unavailable in ScreenOnly mode")
+                        onCaptureRejected("camera unavailable while app screen is not open")
                     }
                 }
             )

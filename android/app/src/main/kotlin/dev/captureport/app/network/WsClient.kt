@@ -23,7 +23,10 @@ import kotlinx.coroutines.flow.StateFlow
 class WsClient(
     private val context: Context,
     private val scope: CoroutineScope,
-    private val onCaptureRequest: (onPhotoSnapped: (File) -> Unit) -> Unit
+    private val onCaptureRequest: (
+        onPhotoSnapped: (File) -> Unit,
+        onCaptureRejected: (String) -> Unit
+    ) -> Unit
 ) {
     private val client = OkHttpClient.Builder()
         .readTimeout(0, TimeUnit.MILLISECONDS) // Keep-alive socket
@@ -159,17 +162,35 @@ class WsClient(
                     }
                     "capture_photo" -> {
                         // Trigger Camera Snap
-                        onCaptureRequest { file ->
-                            scope.launch(Dispatchers.IO) {
-                                uploadPhotoFile(ws, envelope.id, file)
+                        onCaptureRequest(
+                            { file ->
+                                scope.launch(Dispatchers.IO) {
+                                    uploadPhotoFile(ws, envelope.id, file)
+                                }
+                            },
+                            { reason ->
+                                sendCaptureRejected(ws, envelope.id, reason)
                             }
-                        }
+                        )
                     }
                 }
             }
         } catch (e: Exception) {
             Log.e("WsClient", "Failed to parse text envelope message: ${e.message}")
         }
+    }
+
+    private fun sendCaptureRejected(ws: WebSocket, requestId: String, reason: String) {
+        val response = Envelope(
+            t = "resp",
+            id = requestId,
+            error = JSONObject().apply {
+                put("code", "camera_unavailable")
+                put("message", reason)
+            }
+        )
+        ws.send(EnvelopeCodec.encodeEnvelope(response))
+        tracingLog("Rejected remote capture request: $reason")
     }
 
     // Processes, downscales, and uploads photo binary frames over socket

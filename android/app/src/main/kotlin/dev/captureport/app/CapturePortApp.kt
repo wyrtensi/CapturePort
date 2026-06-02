@@ -6,6 +6,10 @@ import dev.captureport.app.network.WsClient
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 
+enum class CameraCapturePolicy(val label: String) {
+    ScreenOnly("Camera: screen only")
+}
+
 class CapturePortApp : Application() {
     
     val applicationScope = CoroutineScope(SupervisorJob())
@@ -14,7 +18,17 @@ class CapturePortApp : Application() {
         private set
         
     var wsClient: WsClient? = null
+    @Volatile
+    var cameraCapturePolicy: CameraCapturePolicy = CameraCapturePolicy.ScreenOnly
+    @Volatile
+    var isCameraScreenVisible: Boolean = false
     var activeCameraController: dev.captureport.app.camera.CameraController? = null
+
+    fun canServeRemoteCameraCapture(): Boolean {
+        return cameraCapturePolicy == CameraCapturePolicy.ScreenOnly &&
+            isCameraScreenVisible &&
+            activeCameraController != null
+    }
 
     override fun onCreate() {
         super.onCreate()

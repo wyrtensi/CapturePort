@@ -40,6 +40,8 @@ import dev.captureport.app.transfer.TransferService
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import java.io.File
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 
 @OptIn(ExperimentalAnimationApi::class)
 @Composable
@@ -63,10 +65,27 @@ fun ReceiversScreen(
     var recordingDuration by remember { mutableStateOf(0) }
 
     // Register active camera controller for MCP triggers
-    DisposableEffect(cameraController) {
+    DisposableEffect(cameraController, lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_START,
+                Lifecycle.Event.ON_RESUME -> app.isCameraScreenVisible = true
+
+                Lifecycle.Event.ON_PAUSE,
+                Lifecycle.Event.ON_STOP,
+                Lifecycle.Event.ON_DESTROY -> app.isCameraScreenVisible = false
+
+                else -> Unit
+            }
+        }
+
         app.activeCameraController = cameraController
+        app.isCameraScreenVisible = lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
+        lifecycleOwner.lifecycle.addObserver(observer)
         cameraController.cameraController.bindToLifecycle(lifecycleOwner)
         onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            app.isCameraScreenVisible = false
             app.activeCameraController = null
             cameraController.cameraController.unbind()
         }
@@ -168,6 +187,11 @@ fun ReceiversScreen(
                         text = connectionState,
                         color = Color(0xFF8C8E96),
                         fontSize = 11.sp
+                    )
+                    Text(
+                        text = app.cameraCapturePolicy.label,
+                        color = Color(0xFF8C8E96),
+                        fontSize = 10.sp
                     )
                 }
             }
