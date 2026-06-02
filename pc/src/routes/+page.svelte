@@ -153,10 +153,11 @@
 
   async function saveSettings() {
     try {
-      await invoke("save_settings", { new_settings: settings });
+      const snapshot = $state.snapshot(settings);
+      await invoke("save_settings", { new_settings: snapshot });
       alert("Settings saved successfully.");
     } catch (e) {
-      alert("Failed to save settings.");
+      alert(`Failed to save settings: ${e}`);
     }
   }
 
@@ -473,8 +474,9 @@
 
   .pairing-columns {
     display: flex;
+    flex-wrap: wrap;
     gap: 24px;
-    max-width: 900px;
+    max-width: 1100px;
     width: 100%;
     align-items: stretch;
     justify-content: center;
@@ -483,7 +485,8 @@
   }
 
   .pairing-panel, .devices-panel {
-    flex: 1;
+    flex: 1 1 320px;
+    min-width: 320px;
     background-color: #141519;
     border: 1px solid #232429;
     border-radius: 16px;
@@ -506,11 +509,12 @@
   }
 
   .panel-title {
-    display: inline-flex;
+    display: flex;
     align-items: center;
     justify-content: center;
     gap: 12px;
     width: 100%;
+    flex-wrap: wrap;
   }
 
   .panel-header h2 {

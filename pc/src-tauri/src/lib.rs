@@ -203,7 +203,7 @@ impl AppSettings {
             port: 7878,
             mcp_enabled: true,
             auto_start: false,
-            close_to_tray: false,
+            close_to_tray: true,
         }
     }
 }
@@ -228,7 +228,7 @@ async fn get_settings() -> Result<serde_json::Value, String> {
         "port": 7878,
         "mcpEnabled": true,
         "autoStart": false,
-        "closeToTray": false
+        "closeToTray": true
     }))
 }
 

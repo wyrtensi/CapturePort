@@ -24,7 +24,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.runtime.saveable.Saver
+import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -80,9 +80,9 @@ fun ReceiversScreen(
     val deviceToDelete = pairedDevices.find { it.id == deviceToDeleteId }
 
     val collapsedDevices = rememberSaveable(
-        saver = Saver(
-            save = { map -> map.toMap() },
-            restore = { map -> mutableStateMapOf<String, Boolean>().apply { putAll(map as Map<String, Boolean>) } }
+        saver = listSaver(
+            save = { it.toList() },
+            restore = { list -> mutableStateMapOf<String, Boolean>().apply { list.forEach { put(it.first, it.second) } } }
         )
     ) { mutableStateMapOf<String, Boolean>() }
 
