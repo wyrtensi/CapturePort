@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.3] - 2026-06-02
+### Fixed
+- Android network security configuration now permits the app's arbitrary LAN `ws://` connections without using invalid CIDR entries, which also unblocks Android lint in CI.
+
 ## [0.1.2] - 2026-06-02
 ### Fixed
 - Android startup no longer crashes on launch because the custom `CapturePortApp` application class is now declared in the manifest.
