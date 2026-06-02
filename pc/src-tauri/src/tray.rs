@@ -1,24 +1,30 @@
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::TrayIconBuilder,
-    AppHandle, Manager, WebviewUrl, WebviewWindowBuilder, Runtime,
+    AppHandle, Emitter, Manager, Runtime, WebviewUrl, WebviewWindowBuilder,
 };
 use anyhow::Result;
 
 pub struct TrayManager;
 
 impl TrayManager {
-    // Helper to open or focus a specific Svelte dashboard window in Tauri 2
-    pub fn open_window<R: Runtime>(app: &AppHandle<R>, label: &str, title: &str, width: f64, height: f64) {
-        if let Some(window) = app.get_webview_window(label) {
+    // Keep desktop navigation inside the main window instead of opening pseudo-pages as separate windows.
+    pub fn open_main_window<R: Runtime>(app: &AppHandle<R>, view: &str) {
+        if let Some(window) = app.get_webview_window("main") {
             let _ = window.show();
             let _ = window.set_skip_taskbar(false);
             let _ = window.set_focus();
+            let _ = window.emit("navigate", view.to_string());
         } else {
+            let window_url = match view {
+                "pairing" | "settings" => format!("/?view={view}"),
+                _ => "/".to_string(),
+            };
+
             #[allow(unused_mut)]
-            let mut builder = WebviewWindowBuilder::new(app, label, WebviewUrl::App("/".into()))
-                .title(title)
-                .inner_size(width, height)
+            let mut builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::App(window_url.into()))
+                .title("CapturePort")
+                .inner_size(980.0, 720.0)
                 .resizable(true)
                 .decorations(true);
 
@@ -28,8 +34,16 @@ impl TrayManager {
                 builder = builder.title_bar_style(tauri::TitleBarStyle::Transparent);
             }
 
-            if let Err(e) = builder.build() {
-                tracing::error!("Failed to build window {}: {:?}", label, e);
+            match builder.build() {
+                Ok(window) => {
+                    let _ = window.show();
+                    let _ = window.set_skip_taskbar(false);
+                    let _ = window.set_focus();
+                    let _ = window.emit("navigate", view.to_string());
+                }
+                Err(e) => {
+                    tracing::error!("Failed to build main window: {:?}", e);
+                }
             }
         }
     }
@@ -84,16 +98,16 @@ impl TrayManager {
             .menu(&menu)
             .on_menu_event(|app, event| match event.id.as_ref() {
                 "open_dashboard" => {
-                    Self::open_window(app, "main", "CapturePort", 980.0, 720.0);
+                    Self::open_main_window(app, "history");
                 }
                 "pair" => {
-                    Self::open_window(app, "pairing", "CapturePort - Pairing", 400.0, 480.0);
+                    Self::open_main_window(app, "pairing");
                 }
                 "open_folder" => {
                     Self::open_pictures_folder();
                 }
                 "settings" => {
-                    Self::open_window(app, "settings", "CapturePort - Settings", 540.0, 600.0);
+                    Self::open_main_window(app, "settings");
                 }
                 "quit" => {
                     app.exit(0);

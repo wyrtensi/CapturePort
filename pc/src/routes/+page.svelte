@@ -3,8 +3,18 @@
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
 
+  type WindowView = "main" | "history" | "pairing" | "settings";
+
+  function normalizeView(view: string | null | undefined): WindowView {
+    if (view === "history" || view === "pairing" || view === "settings") {
+      return view;
+    }
+
+    return "main";
+  }
+
   // Svelte 5 Reactive States
-  let windowLabel = $state("main");
+  let windowLabel = $state<WindowView>("main");
   let pairingQr = $state("");
   let pairingFingerprint = $state("");
   let pairingStatus = $state("Waiting for scanner...");
@@ -16,45 +26,65 @@
     autoStart: false
   });
 
-  onMount(async () => {
-    // 1. Determine active window view from Tauri label
-    try {
-      const { getCurrentWindow } = await import("@tauri-apps/api/window");
-      windowLabel = getCurrentWindow().label;
-    } catch (e) {
-      windowLabel = "main";
-    }
+  async function loadView(view: WindowView) {
+    windowLabel = view;
 
-    // 2. Load context based on view
-    if (windowLabel === "pairing") {
+    if (view === "pairing") {
+      pairingStatus = "Waiting for scanner...";
+
       try {
         const info: any = await invoke("get_pairing_info");
         pairingQr = info.qr_svg;
         pairingFingerprint = info.fingerprint;
       } catch (e) {
+        pairingQr = "";
+        pairingFingerprint = "";
         pairingStatus = "Failed to load QR code";
       }
+    }
 
-      // Listen for socket pairing progression states
-      listen("pairing-status", (event: any) => {
-        pairingStatus = event.payload;
-      });
-    } else if (windowLabel === "history" || windowLabel === "main") {
+    if (view === "history" || view === "main") {
       try {
         mediaHistory = await invoke("get_media_history");
       } catch (e) {}
-
-      // Listen to new media items pushed from the socket
-      listen("media-received", (event: any) => {
-        mediaHistory = [event.payload, ...mediaHistory];
-      });
     }
 
-    if (windowLabel === "settings" || windowLabel === "main") {
+    if (view === "settings" || view === "main") {
       try {
         settings = await invoke("get_settings");
       } catch (e) {}
     }
+  }
+
+  onMount(async () => {
+    // Determine the initial view from either the window label or the startup query.
+    let initialView: WindowView = "main";
+
+    try {
+      const { getCurrentWindow } = await import("@tauri-apps/api/window");
+      initialView = normalizeView(getCurrentWindow().label);
+    } catch (e) {
+      initialView = "main";
+    }
+
+    const requestedView = normalizeView(new URLSearchParams(window.location.search).get("view"));
+    if (requestedView !== "main") {
+      initialView = requestedView;
+    }
+
+    await loadView(initialView);
+
+    listen("pairing-status", (event: any) => {
+      pairingStatus = event.payload;
+    });
+
+    listen("media-received", (event: any) => {
+      mediaHistory = [event.payload, ...mediaHistory];
+    });
+
+    listen("navigate", (event: any) => {
+      void loadView(normalizeView(event.payload));
+    });
   });
 
   async function saveSettings() {
@@ -105,6 +135,7 @@
           <span class="pulse-dot"></span>
           <span class="status-text">{pairingStatus}</span>
         </div>
+        <button class="secondary-btn" onclick={() => void loadView("history")}>Back to dashboard</button>
       </footer>
     </div>
 
@@ -117,10 +148,10 @@
           <h3>CapturePort</h3>
         </div>
         <div class="nav-links">
-          <button class="nav-btn" class:active={windowLabel === "history" || windowLabel === "main"} onclick={() => windowLabel = "history"}>
+          <button class="nav-btn" class:active={windowLabel === "history" || windowLabel === "main"} onclick={() => void loadView("history")}>
             📂 Activity log
           </button>
-          <button class="nav-btn" class:active={windowLabel === "settings"} onclick={() => windowLabel = "settings"}>
+          <button class="nav-btn" class:active={windowLabel === "settings"} onclick={() => void loadView("settings")}>
             ⚙ Settings
           </button>
         </div>
@@ -342,6 +373,32 @@
   .status-text {
     font-size: 12px;
     color: #C5C4DD;
+  }
+
+  .pairing-footer {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+  }
+
+  .secondary-btn {
+    background: transparent;
+    border: 1px solid #2F3138;
+    color: #C5C4DD;
+    outline: none;
+    padding: 10px 16px;
+    border-radius: 10px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+
+  .secondary-btn:hover {
+    border-color: #A4B4FF;
+    color: #E3E3E6;
+    background-color: #1F2128;
   }
 
   /* Dashboard Core (Sidebar & Content) */
