@@ -10,8 +10,11 @@ pub struct QrGenerator;
 impl QrGenerator {
     // Utility to get the PC's preferred LAN IP for mobile pairing.
     pub fn get_local_ip() -> Option<String> {
-        let mut private_fallback = None;
-        let mut general_fallback = None;
+        Self::get_pairing_hosts().into_iter().next()
+    }
+
+    pub fn get_pairing_hosts() -> Vec<String> {
+        let mut ranked_hosts: Vec<(u8, String)> = Vec::new();
 
         if let Ok(ifaces) = get_if_addrs() {
             for iface in ifaces {
@@ -24,26 +27,26 @@ impl QrGenerator {
                     continue;
                 }
 
-                let ip_string = ip.to_string();
-                let is_virtual = Self::is_virtual_interface_name(&iface.name);
-
-                if ip.is_private() && !is_virtual {
-                    return Some(ip_string);
-                }
-
-                if ip.is_private() && private_fallback.is_none() {
-                    private_fallback = Some(ip_string.clone());
-                }
-
-                if !is_virtual && general_fallback.is_none() {
-                    general_fallback = Some(ip_string);
-                }
+                ranked_hosts.push((Self::host_priority(ip, &iface.name), ip.to_string()));
             }
         }
 
-        private_fallback
-            .or(general_fallback)
-            .or_else(Self::legacy_routed_ip)
+        if let Some(routed_ip) = Self::legacy_routed_ip() {
+            ranked_hosts.push((0, routed_ip));
+        }
+
+        ranked_hosts.sort_by(|(left_score, left_host), (right_score, right_host)| {
+            left_score.cmp(right_score).then_with(|| left_host.cmp(right_host))
+        });
+
+        let mut hosts = Vec::new();
+        for (_, host) in ranked_hosts {
+            if !hosts.contains(&host) {
+                hosts.push(host);
+            }
+        }
+
+        hosts
     }
 
     fn legacy_routed_ip() -> Option<String> {
@@ -81,11 +84,14 @@ impl QrGenerator {
         let lowered = name.to_ascii_lowercase();
         [
             "loopback",
+            "host-only",
             "vethernet",
             "hyper-v",
             "docker",
             "wsl",
+            "podman",
             "vmware",
+            "vmnet",
             "virtualbox",
             "vpn",
             "tun",
@@ -98,13 +104,37 @@ impl QrGenerator {
         .any(|needle| lowered.contains(needle))
     }
 
+    fn host_priority(ip: Ipv4Addr, interface_name: &str) -> u8 {
+        let is_virtual = Self::is_virtual_interface_name(interface_name);
+        let looks_host_only = Self::looks_like_host_only_network(ip);
+
+        match (ip.is_private(), is_virtual || looks_host_only) {
+            (true, false) => 0,
+            (false, false) => 1,
+            (true, true) => 2,
+            (false, true) => 3,
+        }
+    }
+
+    fn looks_like_host_only_network(ip: Ipv4Addr) -> bool {
+        let [a, b, c, _] = ip.octets();
+
+        matches!((a, b, c), (192, 168, 56) | (192, 168, 99) | (192, 168, 122))
+    }
+
     // Creates the pairing URL and renders it as an SVG data URL
     pub fn generate_pairing_qr(
         pubkey: &[u8; 32],
         privkey: &[u8; 32],
         port: u16,
     ) -> Result<(String, String, String, [u8; 32])> {
-        let host = Self::get_local_ip().unwrap_or_else(|| "127.0.0.1".to_string());
+        let hosts = Self::get_pairing_hosts();
+        let host = hosts.first().cloned().unwrap_or_else(|| "127.0.0.1".to_string());
+        let hosts_param = if hosts.is_empty() {
+            host.clone()
+        } else {
+            hosts.join(",")
+        };
         let hostname = hostname::get()
             .map(|h| h.to_string_lossy().into_owned())
             .unwrap_or_else(|_| "Desktop-Machine".to_string());
@@ -133,8 +163,8 @@ impl QrGenerator {
 
         // 4. Construct pairing URL
         let pair_url = format!(
-            "captureport://pair?v=1&host={}&port={}&pk={}&name={}&os={}&nonce={}&sig={}",
-            host, port, pk_b64, hostname, os, nonce_b64, sig_b64
+            "captureport://pair?v=1&host={}&hosts={}&port={}&pk={}&name={}&os={}&nonce={}&sig={}",
+            host, hosts_param, port, pk_b64, hostname, os, nonce_b64, sig_b64
         );
 
         // 5. Generate fingerprint: first 8 bytes of sha256(pk) formatted as hex split by colons

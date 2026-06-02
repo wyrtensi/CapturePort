@@ -19,7 +19,7 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: 'temurin'
           java-version: '17'
@@ -48,7 +48,7 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: 'temurin'
           java-version: '17'
@@ -63,7 +63,7 @@ jobs:
         run: ./gradlew assembleDebug assembleRelease
 
       - name: Upload Installable Debug APK Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: captureport-android-debug-apk
           path: android/app/build/outputs/apk/debug/*.apk
@@ -71,7 +71,7 @@ jobs:
           retention-days: 14
 
       - name: Upload Unsigned Release APK Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: captureport-android-unsigned-release-apk
           path: android/app/build/outputs/apk/release/*.apk
@@ -80,7 +80,7 @@ jobs:
 
       - name: Publish Installable APK to GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:

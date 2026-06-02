@@ -21,6 +21,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import dev.captureport.app.camera.CameraController
 
 @Composable
@@ -35,9 +37,18 @@ fun PairingScreen(
     val uiState by viewModel.uiState.collectAsState()
     
     // Instantiate camera controller specifically for scanning QR code
-    val cameraController = remember { CameraController(context) }
+    val cameraController = remember {
+        CameraController(
+            context,
+            enableImageCapture = false,
+            enableVideoCapture = false,
+            enableImageAnalysis = true
+        )
+    }
     
     var isScanned by remember { mutableStateOf(false) }
+    val latestUiState by rememberUpdatedState(uiState)
+    val latestIsScanned by rememberUpdatedState(isScanned)
 
     LaunchedEffect(uiState) {
         if (uiState is PairingState.Success) {
@@ -60,6 +71,18 @@ fun PairingScreen(
                 viewModel.showError("Invalid pairing QR. Regenerate the QR code on your PC and scan again.")
             } else {
                 val host = uri.getQueryParameter("host") ?: ""
+                val hosts = buildList {
+                    addAll(
+                        uri.getQueryParameter("hosts")
+                            ?.split(',')
+                            .orEmpty()
+                            .map(String::trim)
+                            .filter(String::isNotBlank)
+                    )
+                    if (host.isNotBlank()) {
+                        add(host)
+                    }
+                }.distinct()
                 val port = uri.getQueryParameter("port")?.toIntOrNull() ?: -1
                 val pk = uri.getQueryParameter("pk") ?: ""
                 val name = uri.getQueryParameter("name") ?: ""
@@ -67,23 +90,57 @@ fun PairingScreen(
                 val nonce = uri.getQueryParameter("nonce") ?: ""
                 val sig = uri.getQueryParameter("sig") ?: ""
 
-                if (host.isBlank() || port !in 1..65535 || pk.isBlank() || nonce.isBlank() || sig.isBlank()) {
+                if (hosts.isEmpty() || port !in 1..65535 || pk.isBlank() || nonce.isBlank() || sig.isBlank()) {
                     viewModel.showError("Invalid pairing QR. Regenerate the QR code on your PC and scan again.")
                 } else {
-                    viewModel.startPairing(host, port, pk, name, os, nonce, sig)
+                    viewModel.startPairing(hosts, port, pk, name, os, nonce, sig)
                 }
             }
         }
     }
 
-    LaunchedEffect(lifecycleOwner) {
-        cameraController.cameraController.bindToLifecycle(lifecycleOwner)
-        cameraController.startQrScanning(scanCallback)
+    val latestScanCallback by rememberUpdatedState(scanCallback)
+
+    DisposableEffect(cameraController, lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_START,
+                Lifecycle.Event.ON_RESUME -> {
+                    cameraController.bindToLifecycle(lifecycleOwner)
+                    if (latestUiState is PairingState.Scanning && !latestIsScanned) {
+                        cameraController.startQrScanning(latestScanCallback)
+                    }
+                }
+
+                Lifecycle.Event.ON_PAUSE,
+                Lifecycle.Event.ON_STOP -> {
+                    cameraController.stopQrScanning()
+                    cameraController.unbind()
+                }
+
+                else -> Unit
+            }
+        }
+
+        lifecycleOwner.lifecycle.addObserver(observer)
+        if (lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
+            cameraController.bindToLifecycle(lifecycleOwner)
+        }
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            cameraController.release()
+        }
     }
 
-    DisposableEffect(Unit) {
-        onDispose {
-            cameraController.release()
+    LaunchedEffect(uiState, isScanned, lifecycleOwner) {
+        if (!lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
+            return@LaunchedEffect
+        }
+
+        if (uiState is PairingState.Scanning && !isScanned) {
+            cameraController.startQrScanning(scanCallback)
+        } else {
+            cameraController.stopQrScanning()
         }
     }
 
@@ -236,7 +293,6 @@ fun PairingScreen(
                                     onClick = {
                                         isScanned = false
                                         viewModel.resetScanning()
-                                        cameraController.startQrScanning(scanCallback)
                                     },
                                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF44464F)),
                                     modifier = Modifier.fillMaxWidth().height(48.dp)

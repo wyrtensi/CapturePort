@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.5] - 2026-06-02
+### Fixed
+- Android pairing QR payloads now advertise multiple candidate LAN addresses, and the phone retries them sequentially so host-only adapters such as `192.168.56.1` no longer block pairing on multi-OS setups.
+- Android pairing camera flow now uses lifecycle-aware binding with `KEEP_ONLY_LATEST` analysis backpressure, which reduces scanner freezes and avoids the later `Not bound to a valid Camera` capture failure after returning home.
+- Android release automation now uses Node 24-compatible GitHub Actions versions, removing the remaining deprecated Node 20 runtime warnings.
+
 ## [0.1.4] - 2026-06-02
 ### Fixed
 - Pairing QR codes now prefer a real LAN IPv4 address instead of unusable virtual or VPN addresses such as `198.18.0.1`.

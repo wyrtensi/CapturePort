@@ -14,6 +14,7 @@ import androidx.camera.video.Recording
 import androidx.camera.video.QualitySelector
 import androidx.camera.video.Quality
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.LifecycleOwner
 import com.google.mlkit.vision.barcode.BarcodeScanner
 import com.google.mlkit.vision.barcode.BarcodeScanning
 import com.google.mlkit.vision.common.InputImage
@@ -22,15 +23,27 @@ import java.util.concurrent.Executor
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 
-class CameraController(private val context: Context) {
+class CameraController(
+    private val context: Context,
+    enableImageCapture: Boolean = true,
+    enableVideoCapture: Boolean = true,
+    enableImageAnalysis: Boolean = false
+) {
+
+    private val enabledUseCases =
+        (if (enableImageCapture) LifecycleCameraController.IMAGE_CAPTURE else 0) or
+        (if (enableVideoCapture) LifecycleCameraController.VIDEO_CAPTURE else 0) or
+        (if (enableImageAnalysis) LifecycleCameraController.IMAGE_ANALYSIS else 0)
 
     val cameraController = LifecycleCameraController(context).apply {
-        setEnabledUseCases(
-            LifecycleCameraController.IMAGE_CAPTURE or
-            LifecycleCameraController.VIDEO_CAPTURE or
-            LifecycleCameraController.IMAGE_ANALYSIS
-        )
-        videoCaptureQualitySelector = QualitySelector.from(Quality.HD)
+        setEnabledUseCases(enabledUseCases)
+        if (enableVideoCapture) {
+            videoCaptureQualitySelector = QualitySelector.from(Quality.HD)
+        }
+        if (enableImageAnalysis) {
+            setImageAnalysisBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+            setImageAnalysisImageQueueDepth(1)
+        }
     }
 
     private var activeRecording: Recording? = null
@@ -39,6 +52,27 @@ class CameraController(private val context: Context) {
     private val barcodeScanner: BarcodeScanner = BarcodeScanning.getClient()
     private val qrScanningActive = AtomicBoolean(false)
     private val scanInFlight = AtomicBoolean(false)
+    private var boundLifecycleOwner: LifecycleOwner? = null
+
+    fun bindToLifecycle(lifecycleOwner: LifecycleOwner) {
+        if (boundLifecycleOwner === lifecycleOwner) {
+            return
+        }
+
+        cameraController.unbind()
+        cameraController.bindToLifecycle(lifecycleOwner)
+        boundLifecycleOwner = lifecycleOwner
+    }
+
+    fun unbind() {
+        if (boundLifecycleOwner == null) {
+            return
+        }
+
+        stopQrScanning()
+        cameraController.unbind()
+        boundLifecycleOwner = null
+    }
 
     // Snap photo using CameraX ImageCapture pipeline
     fun takePhoto(
@@ -94,6 +128,10 @@ class CameraController(private val context: Context) {
     // Set real-time ML Kit QR scanner analyzer inside the CameraX ImageAnalysis pipeline
     @OptIn(ExperimentalGetImage::class)
     fun startQrScanning(onQrCodeScanned: (String) -> Unit) {
+        if ((enabledUseCases and LifecycleCameraController.IMAGE_ANALYSIS) == 0) {
+            return
+        }
+
         stopQrScanning()
         qrScanningActive.set(true)
 
@@ -139,14 +177,14 @@ class CameraController(private val context: Context) {
     // Unregisters analysis callbacks to stop scanning
     fun stopQrScanning() {
         qrScanningActive.set(false)
+        scanInFlight.set(false)
         cameraController.clearImageAnalysisAnalyzer()
     }
 
     fun release() {
-        stopQrScanning()
         stopVideoRecording()
+        unbind()
         barcodeScanner.close()
         analysisExecutor.shutdownNow()
-        cameraController.unbind()
     }
 }

@@ -69,24 +69,38 @@ fun ReceiversScreen(
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
                 Lifecycle.Event.ON_START,
-                Lifecycle.Event.ON_RESUME -> app.isCameraScreenVisible = true
+                Lifecycle.Event.ON_RESUME -> {
+                    app.activeCameraController = cameraController
+                    app.isCameraScreenVisible = true
+                    cameraController.bindToLifecycle(lifecycleOwner)
+                }
 
                 Lifecycle.Event.ON_PAUSE,
                 Lifecycle.Event.ON_STOP,
-                Lifecycle.Event.ON_DESTROY -> app.isCameraScreenVisible = false
+                Lifecycle.Event.ON_DESTROY -> {
+                    if (app.activeCameraController === cameraController) {
+                        app.activeCameraController = null
+                    }
+                    app.isCameraScreenVisible = false
+                    cameraController.unbind()
+                }
 
                 else -> Unit
             }
         }
 
-        app.activeCameraController = cameraController
-        app.isCameraScreenVisible = lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
         lifecycleOwner.lifecycle.addObserver(observer)
-        cameraController.cameraController.bindToLifecycle(lifecycleOwner)
+        if (lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
+            app.activeCameraController = cameraController
+            app.isCameraScreenVisible = true
+            cameraController.bindToLifecycle(lifecycleOwner)
+        }
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(observer)
             app.isCameraScreenVisible = false
-            app.activeCameraController = null
+            if (app.activeCameraController === cameraController) {
+                app.activeCameraController = null
+            }
             cameraController.release()
         }
     }
