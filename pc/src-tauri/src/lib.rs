@@ -142,14 +142,14 @@ pub fn run() {
                 let server_handle = app.handle().clone();
                 
                 // Spawn axum server (gui mode, pass AppHandle)
-                tokio::spawn(async move {
+                tauri::async_runtime::spawn(async move {
                     if let Err(e) = crate::ws::WsServer::start(ws_state, Some(server_handle), 7878).await {
                         tracing::error!("axum WebSocket server failed to start: {:?}", e);
                     }
                 });
 
                 // Spawn mDNS advertiser and store inside AppState to keep it alive
-                tokio::spawn(async move {
+                tauri::async_runtime::spawn(async move {
                     match crate::mdns::MdnsAdvertiser::start(7878) {
                         Ok(adv) => {
                             let mut inner = mdns_state.inner.lock().unwrap();
@@ -162,7 +162,7 @@ pub fn run() {
                 });
 
                 // Spawn periodic correlation map reaper task (every 5 seconds)
-                tokio::spawn(async move {
+                tauri::async_runtime::spawn(async move {
                     let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(5));
                     loop {
                         interval.tick().await;
@@ -170,13 +170,15 @@ pub fn run() {
                     }
                 });
 
-                // Setup native tray menu
-                crate::tray::TrayManager::create_tray(&app_handle).unwrap();
+                // Setup native tray menu without crashing the entire app on tray init failure.
+                if let Err(error) = crate::tray::TrayManager::create_tray(&app_handle) {
+                    tracing::error!("Failed to create tray icon: {:?}", error);
+                }
                 
-                // On Windows/Linux, do not create default visible main window on startup.
-                // It runs safely in the background tray menu.
+                // Keep the main window alive but hidden so the process stays resident.
                 if let Some(main_win) = app.get_webview_window("main") {
-                    let _ = main_win.close();
+                    let _ = main_win.hide();
+                    let _ = main_win.set_skip_taskbar(true);
                 }
 
                 Ok(())

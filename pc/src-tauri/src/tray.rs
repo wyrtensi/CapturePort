@@ -12,6 +12,7 @@ impl TrayManager {
     pub fn open_window<R: Runtime>(app: &AppHandle<R>, label: &str, title: &str, width: f64, height: f64) {
         if let Some(window) = app.get_webview_window(label) {
             let _ = window.show();
+            let _ = window.set_skip_taskbar(false);
             let _ = window.set_focus();
         } else {
             #[allow(unused_mut)]
@@ -60,6 +61,7 @@ impl TrayManager {
 
     // Creates the system-tray context menu and binds event listeners
     pub fn create_tray<R: Runtime>(app: &AppHandle<R>) -> Result<()> {
+        let open_dashboard = MenuItem::with_id(app, "open_dashboard", "Open CapturePort", true, None::<&str>)?;
         let pair = MenuItem::with_id(app, "pair", "Pair new device...", true, None::<&str>)?;
         let open_folder = MenuItem::with_id(app, "open_folder", "Open received folder", true, None::<&str>)?;
         let settings = MenuItem::with_id(app, "settings", "Settings...", true, None::<&str>)?;
@@ -68,6 +70,7 @@ impl TrayManager {
         let menu = Menu::with_items(
             app,
             &[
+                &open_dashboard,
                 &pair,
                 &open_folder,
                 &settings,
@@ -80,6 +83,9 @@ impl TrayManager {
             .icon(app.default_window_icon().cloned().unwrap())
             .menu(&menu)
             .on_menu_event(|app, event| match event.id.as_ref() {
+                "open_dashboard" => {
+                    Self::open_window(app, "main", "CapturePort", 980.0, 720.0);
+                }
                 "pair" => {
                     Self::open_window(app, "pairing", "CapturePort - Pairing", 400.0, 480.0);
                 }
