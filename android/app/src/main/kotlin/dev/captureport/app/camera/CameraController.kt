@@ -47,6 +47,7 @@ class CameraController(
     }
 
     private var activeRecording: Recording? = null
+    val isRecording: Boolean get() = activeRecording != null
     private val mainExecutor: Executor = ContextCompat.getMainExecutor(context)
     private val analysisExecutor = Executors.newSingleThreadExecutor()
     private val barcodeScanner: BarcodeScanner = BarcodeScanning.getClient()
@@ -102,6 +103,10 @@ class CameraController(
     fun startVideoRecording(
         onEvent: (VideoRecordEvent) -> Unit
     ): File {
+        if (activeRecording != null) {
+            android.util.Log.w("CameraController", "Recording is already active. Stopping old recording first.")
+            stopVideoRecording()
+        }
         val file = File(context.cacheDir, "CP_vid_${System.currentTimeMillis()}.mp4")
         val fileOutputOptions = FileOutputOptions.Builder(file).build()
         val audioConfig = androidx.camera.view.video.AudioConfig.create(true)

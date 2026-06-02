@@ -33,6 +33,7 @@ pc/src-tauri/target/
 pc/src-tauri/gen/schemas/
 pc/src-tauri/WixTools/
 pc/src-tauri/.cargo/
+pc/src-tauri/librust_out.rmeta
 pc/ui/node_modules/
 pc/ui/dist/
 pc/ui/.svelte-kit/
@@ -42,6 +43,7 @@ pc/ui/build/
 
 # ─── Android / Gradle ───
 android/.gradle/
+android/.kotlin/
 android/build/
 android/app/build/
 android/app/release/

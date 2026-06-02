@@ -19,12 +19,70 @@
   let pairingFingerprint = $state("");
   let pairingStatus = $state("Waiting for scanner...");
   let mediaHistory = $state<any[]>([]);
+  let pairedDevices = $state<any[]>([]);
   let settings = $state({
     deviceName: "PC-Machine",
     port: 7878,
     mcpEnabled: true,
-    autoStart: false
+    autoStart: false,
+    closeToTray: false
   });
+
+  async function loadPairedDevices() {
+    try {
+      pairedDevices = await invoke("get_paired_devices");
+    } catch (e) {
+      pairedDevices = [];
+    }
+  }
+
+  async function refreshPairingInfo() {
+    pairingStatus = "Refreshing QR code...";
+    try {
+      const info: any = await invoke("get_pairing_info");
+      pairingQr = info.qr_svg;
+      pairingFingerprint = info.fingerprint;
+      pairingStatus = "Waiting for scanner...";
+    } catch (e) {
+      pairingQr = "";
+      pairingFingerprint = "";
+      pairingStatus = "Failed to load QR code";
+    }
+  }
+
+  async function toggleMcp(id: string, exposed: boolean) {
+    try {
+      await invoke("set_device_mcp_exposure", { id, exposed });
+    } catch (e) {
+      alert("Failed to toggle MCP exposure");
+      await loadPairedDevices();
+    }
+  }
+
+  async function unpairDevice(id: string) {
+    if (confirm("Are you sure you want to unpair this device?")) {
+      try {
+        await invoke("unpair_device", { id });
+      } catch (e) {
+        alert("Failed to unpair device");
+      }
+    }
+  }
+
+  async function regenerateIdentity() {
+    if (confirm("Are you sure you want to regenerate the PC identity? This will invalidate all current pairings.")) {
+      pairingStatus = "Regenerating identity...";
+      try {
+        const info: any = await invoke("regenerate_pc_identity");
+        pairingQr = info.qr_svg;
+        pairingFingerprint = info.fingerprint;
+        pairingStatus = "Waiting for scanner...";
+        await loadPairedDevices();
+      } catch (e) {
+        pairingStatus = "Failed to regenerate identity";
+      }
+    }
+  }
 
   async function loadView(view: WindowView) {
     windowLabel = view;
@@ -41,6 +99,8 @@
         pairingFingerprint = "";
         pairingStatus = "Failed to load QR code";
       }
+
+      await loadPairedDevices();
     }
 
     if (view === "history" || view === "main") {
@@ -80,6 +140,10 @@
 
     listen("media-received", (event: any) => {
       mediaHistory = [event.payload, ...mediaHistory];
+    });
+
+    listen("devices-changed", async () => {
+      await loadPairedDevices();
     });
 
     listen("navigate", (event: any) => {
@@ -186,6 +250,11 @@
                   <span class="media-kind" class:kind-video={item.kind === 'video'}>
                     {item.kind.toUpperCase()}
                   </span>
+                  {#if item.device_name}
+                    <span class="media-device-name" style="margin-left: 8px; font-size: 11px; color: #8c8e96;">
+                      {item.device_name}
+                    </span>
+                  {/if}
                   <span class="media-time">
                     {new Date(item.timestamp).toLocaleTimeString()}
                   </span>
@@ -197,45 +266,111 @@
 
       {:else if windowLabel === "pairing"}
         <div class="pairing-content">
-          <div class="panel pairing-panel">
-            <header class="panel-header">
-              <div class="panel-title">
-                <span class="title-icon" aria-hidden="true">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                    <rect x="7" y="2.5" width="10" height="19" rx="2.5" />
-                    <path d="M10 6.5h4" />
-                    <circle cx="12" cy="17.5" r="1" fill="currentColor" stroke="none" />
-                  </svg>
-                </span>
-                <h2>Pair New Device</h2>
-              </div>
-              <p>Scan this QR code from the CapturePort app on your phone</p>
-            </header>
-
-            <div class="qr-container">
-              {#if pairingQr}
-                <div class="qr-graphic">
-                  <!-- Render the raw QR SVG vector code directly -->
-                  {@html pairingQr.replace("data:image/svg+xml;utf8,", "")}
+          <div class="pairing-columns">
+            <div class="panel pairing-panel">
+              <header class="panel-header">
+                <div class="panel-title">
+                  <span class="title-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                      <rect x="7" y="2.5" width="10" height="19" rx="2.5" />
+                      <path d="M10 6.5h4" />
+                      <circle cx="12" cy="17.5" r="1" fill="currentColor" stroke="none" />
+                    </svg>
+                  </span>
+                  <h2>Pair New Device</h2>
                 </div>
-              {:else}
-                <div class="qr-placeholder spinner"></div>
+                <p>Scan this QR code from the CapturePort app on your phone</p>
+              </header>
+
+              <!-- svelte-ignore a11y_click_events_have_key_events -->
+              <!-- svelte-ignore a11y_no_static_element_interactions -->
+              <div class="qr-container" onclick={refreshPairingInfo} title="Click to refresh QR Code">
+                {#if pairingQr}
+                  <img src={pairingQr} class="qr-graphic-img" alt="Pairing QR Code" />
+                {:else}
+                  <div class="qr-placeholder spinner"></div>
+                {/if}
+              </div>
+
+              {#if pairingFingerprint}
+                <div class="fingerprint-box">
+                  <span class="label">FINGERPRINT</span>
+                  <code class="fingerprint">{pairingFingerprint}</code>
+                </div>
               {/if}
+
+              {#if pairedDevices.length > 0}
+                <div class="pairing-warning">
+                  <p><strong>Notice:</strong> PC is already paired. Scanning will update pairing or add a new device.</p>
+                  <button class="action-btn text-danger" onclick={regenerateIdentity}>
+                    Regenerate PC Identity
+                  </button>
+                </div>
+              {/if}
+
+              <footer class="pairing-footer">
+                <div class="status-indicator">
+                  <span class="pulse-dot"></span>
+                  <span class="status-text">{pairingStatus}</span>
+                </div>
+              </footer>
             </div>
 
-            {#if pairingFingerprint}
-              <div class="fingerprint-box">
-                <span class="label">FINGERPRINT</span>
-                <code class="fingerprint">{pairingFingerprint}</code>
-              </div>
-            {/if}
+            <div class="panel devices-panel">
+              <header class="panel-header">
+                <div class="panel-title">
+                  <span class="title-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                      <circle cx="9" cy="7" r="4" />
+                      <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+                      <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+                    </svg>
+                  </span>
+                  <h2>Paired Devices</h2>
+                </div>
+                <p>Manage devices allowed to connect to this PC</p>
+              </header>
 
-            <footer class="pairing-footer">
-              <div class="status-indicator">
-                <span class="pulse-dot"></span>
-                <span class="status-text">{pairingStatus}</span>
+              <div class="devices-list">
+                {#if pairedDevices.length === 0}
+                  <div class="empty-devices">
+                    <p>No devices paired yet.</p>
+                    <p class="subtitle" style="font-size: 12px; color: #5C5D64; margin-top: 4px;">Use the QR code to pair your first device.</p>
+                  </div>
+                {:else}
+                  {#each pairedDevices as device}
+                    <div class="device-card">
+                      <div class="device-info-row">
+                        <div class="device-details">
+                          <span class="device-name">{device.name}</span>
+                          <span class="device-os">{device.os}</span>
+                        </div>
+                        <div class="device-status">
+                          <span class="status-badge" class:online={device.online}>
+                            {device.online ? "Online" : "Offline"}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div class="device-controls">
+                        <div class="mcp-toggle-container">
+                          <label class="switch">
+                            <input type="checkbox" checked={device.exposed_to_mcp} onchange={(e) => toggleMcp(device.id, e.currentTarget.checked)} />
+                            <span class="slider round"></span>
+                          </label>
+                          <span class="mcp-label">Pass to MCP</span>
+                        </div>
+
+                        <button class="unpair-btn" onclick={() => unpairDevice(device.id)}>
+                          Unpair
+                        </button>
+                      </div>
+                    </div>
+                  {/each}
+                {/if}
               </div>
-            </footer>
+            </div>
           </div>
         </div>
 
@@ -266,6 +401,11 @@
             <label for="auto-start">Launch automatically on system startup</label>
           </div>
 
+          <div class="form-group checkbox-group">
+            <input id="close-to-tray" type="checkbox" bind:checked={settings.closeToTray} />
+            <label for="close-to-tray">Minimize to system tray instead of exiting on window close</label>
+          </div>
+
           <button type="submit" class="submit-btn">Save Configurations</button>
         </form>
       {/if}
@@ -275,6 +415,10 @@
 
 <style>
   /* Custom modern dark theme colors and CSS reset */
+  :global(html) {
+    color-scheme: dark;
+  }
+
   :global(body) {
     margin: 0;
     padding: 0;
@@ -282,6 +426,23 @@
     background-color: #101114;
     color: #E3E3E6;
     overflow: hidden;
+    color-scheme: dark;
+  }
+
+  /* Custom dark scrollbar styling for WebKit */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-track {
+    background: #101114;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #2F3138;
+    border-radius: 4px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #44464F;
   }
 
   .app-container {
@@ -301,7 +462,7 @@
     to { opacity: 1; transform: translateY(0); }
   }
 
-  /* Pairing Panel Layout */
+  /* Pairing Columns & Layout */
   .pairing-content {
     width: 100%;
     min-height: 100%;
@@ -310,37 +471,62 @@
     justify-content: center;
   }
 
-  .pairing-panel {
+  .pairing-columns {
+    display: flex;
+    gap: 24px;
+    max-width: 900px;
+    width: 100%;
+    align-items: stretch;
+    justify-content: center;
+    padding: 16px;
+    box-sizing: border-box;
+  }
+
+  .pairing-panel, .devices-panel {
+    flex: 1;
+    background-color: #141519;
+    border: 1px solid #232429;
+    border-radius: 16px;
+    padding: 24px;
     display: flex;
     flex-direction: column;
     align-items: center;
-    justify-content: center;
-    width: min(100%, 520px);
-    padding: 24px;
+    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4);
     box-sizing: border-box;
+  }
+
+  .devices-panel {
+    align-items: stretch;
   }
 
   .panel-header {
     text-align: center;
     margin-bottom: 20px;
+    width: 100%;
   }
 
   .panel-title {
     display: inline-flex;
     align-items: center;
+    justify-content: center;
     gap: 12px;
+    width: 100%;
   }
 
   .panel-header h2 {
-    margin: 0 0 6px 0;
+    margin: 0;
     font-weight: 600;
     color: #A4B4FF;
+    font-size: 20px;
   }
 
   .title-icon {
     width: 22px;
     height: 22px;
     color: #A4B4FF;
+    display: flex;
+    align-items: center;
+    justify-content: center;
   }
 
   .title-icon svg {
@@ -349,8 +535,8 @@
   }
 
   .panel-header p {
-    margin: 0;
-    font-size: 14px;
+    margin: 6px 0 0 0;
+    font-size: 13px;
     color: #8C8E96;
   }
 
@@ -360,14 +546,243 @@
     border-radius: 16px;
     box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4);
     margin-bottom: 20px;
-    width: 260px;
-    height: 260px;
+    width: 240px;
+    height: 240px;
     display: flex;
     align-items: center;
     justify-content: center;
+    cursor: pointer;
+    transition: transform 0.2s, box-shadow 0.2s;
   }
 
-  .qr-graphic {
+  .qr-container:hover {
+    transform: scale(1.02);
+    box-shadow: 0 12px 40px rgba(164, 180, 255, 0.2);
+  }
+
+  .qr-container:active {
+    transform: scale(0.98);
+  }
+
+  /* Devices list and card stylings */
+  .devices-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-top: 8px;
+    overflow-y: auto;
+    max-height: 380px;
+    padding-right: 4px;
+  }
+
+  .empty-devices {
+    text-align: center;
+    color: #8C8E96;
+    padding: 48px 16px;
+    font-size: 14px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    flex: 1;
+  }
+
+  .empty-devices p {
+    margin: 0;
+  }
+
+  .device-card {
+    background-color: #1A1B20;
+    border: 1px solid #232429;
+    border-radius: 12px;
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .device-info-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .device-details {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .device-name {
+    font-weight: 600;
+    color: #E3E3E6;
+    font-size: 14px;
+  }
+
+  .device-os {
+    font-size: 11px;
+    color: #8C8E96;
+    text-transform: capitalize;
+  }
+
+  .status-badge {
+    font-size: 10px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 10px;
+    background-color: #2F2121;
+    color: #FF8F8F;
+  }
+
+  .status-badge.online {
+    background-color: #1B2F21;
+    color: #8FFF9F;
+  }
+
+  .device-controls {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-top: 1px solid #232429;
+    padding-top: 10px;
+  }
+
+  .mcp-toggle-container {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .mcp-label {
+    font-size: 12px;
+    color: #C5C4DD;
+  }
+
+  .unpair-btn {
+    background: none;
+    border: 1px solid #FF5C5C40;
+    color: #FF5C5C;
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .unpair-btn:hover {
+    background-color: #FF5C5C15;
+    border-color: #FF5C5C;
+  }
+
+  .unpair-btn:active {
+    transform: scale(0.97);
+  }
+
+  /* Custom Switch Toggle styling */
+  .switch {
+    position: relative;
+    display: inline-block;
+    width: 32px;
+    height: 18px;
+  }
+
+  .switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+  }
+
+  .slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: #2F3138;
+    transition: .3s;
+  }
+
+  .slider:before {
+    position: absolute;
+    content: "";
+    height: 12px;
+    width: 12px;
+    left: 3px;
+    bottom: 3px;
+    background-color: #8C8E96;
+    transition: .3s;
+  }
+
+  input:checked + .slider {
+    background-color: #3B5BFF;
+  }
+
+  input:checked + .slider:before {
+    transform: translateX(14px);
+    background-color: #FFFFFF;
+  }
+
+  .slider.round {
+    border-radius: 18px;
+  }
+
+  .slider.round:before {
+    border-radius: 50%;
+  }
+
+  /* Styling for warnings / action buttons */
+  .pairing-warning {
+    margin: 8px 0 16px 0;
+    padding: 10px;
+    background-color: #221A1A;
+    border: 1px solid #FF5C5C25;
+    border-radius: 8px;
+    text-align: center;
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  .pairing-warning p {
+    margin: 0 0 6px 0;
+    font-size: 11px;
+    color: #FF8F8F;
+    line-height: 1.4;
+  }
+
+  .action-btn {
+    background: none;
+    border: 1px solid #44464F;
+    color: #E3E3E6;
+    padding: 4px 8px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .action-btn:hover {
+    background-color: #1F2128;
+    border-color: #8C8E96;
+  }
+
+  .action-btn.text-danger {
+    color: #FF5C5C;
+    border-color: #FF5C5C30;
+  }
+
+  .action-btn.text-danger:hover {
+    background-color: #FF5C5C15;
+    border-color: #FF5C5C;
+  }
+
+  .action-btn:active {
+    transform: scale(0.97);
+  }
+
+  .qr-graphic-img {
     width: 100%;
     height: 100%;
   }

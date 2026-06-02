@@ -30,7 +30,7 @@ sealed interface PairingState {
     object Handshaking : PairingState
     data class FingerprintVerification(val fingerprint: String, val onConfirm: () -> Unit) : PairingState
     object Success : PairingState
-    data class Error(val message: String) : PairingState
+    data class Error(val message: String, val canRetryManual: Boolean = false) : PairingState
 }
 
 class PairingViewModel(
@@ -57,6 +57,7 @@ class PairingViewModel(
 
     private var pairingSocket: WebSocket? = null
     private val pairingAttemptCounter = AtomicLong(0)
+    private var lastPairingRequest: PairingRequest? = null
 
     private fun nextAttemptId(): Long = pairingAttemptCounter.incrementAndGet()
 
@@ -69,11 +70,76 @@ class PairingViewModel(
         _uiState.value = PairingState.Scanning
     }
 
+    fun reset() {
+        resetScanning()
+    }
+
     fun showError(message: String) {
         nextAttemptId()
         pairingSocket?.cancel()
         pairingSocket = null
-        _uiState.value = PairingState.Error(message)
+        _uiState.value = PairingState.Error(message, canRetryManual = lastPairingRequest != null)
+    }
+
+    fun pairWithManualIp(manualIp: String) {
+        val req = lastPairingRequest ?: return
+        var host = manualIp.trim()
+        if (host.isEmpty()) return
+
+        // Strip potential URL schemes and paths
+        if (host.startsWith("ws://", ignoreCase = true)) host = host.substring(5)
+        else if (host.startsWith("wss://", ignoreCase = true)) host = host.substring(6)
+        else if (host.startsWith("http://", ignoreCase = true)) host = host.substring(7)
+        else if (host.startsWith("https://", ignoreCase = true)) host = host.substring(8)
+        
+        val slashIndex = host.indexOf('/')
+        if (slashIndex != -1) {
+            host = host.substring(0, slashIndex)
+        }
+
+        // Parse host[:port], supporting bracketed IPv6 literals like [::1]:7878.
+        // A bare IPv6 literal (multiple colons, no brackets) is kept as a single host
+        // with the default port, since splitting on the last ':' would be ambiguous.
+        val (targetHost, targetPort) = if (host.startsWith("[")) {
+            val endBracket = host.indexOf(']')
+            if (endBracket > 0) {
+                val inner = host.substring(1, endBracket)
+                val portStr = host.substring(endBracket + 1).removePrefix(":")
+                inner to (portStr.toIntOrNull() ?: req.port)
+            } else {
+                host to req.port
+            }
+        } else {
+            val lastColon = host.lastIndexOf(':')
+            val parsedPort = if (lastColon > 0) host.substring(lastColon + 1).toIntOrNull() else null
+            if (parsedPort != null && host.indexOf(':') == lastColon) {
+                host.substring(0, lastColon) to parsedPort
+            } else {
+                host to req.port
+            }
+        }
+
+        val newRequest = req.copy(hosts = listOf(targetHost), port = targetPort)
+        val attemptId = nextAttemptId()
+        pairingSocket?.cancel()
+        pairingSocket = null
+        _uiState.value = PairingState.Connecting
+
+        viewModelScope.launch(Dispatchers.IO) {
+            val phonePubKey = try {
+                Ed25519KeyManager.getRawPublicKey()
+            } catch (e: Throwable) {
+                Log.e("PairingViewModel", "Failed to access Ed25519 key pair: ${e.message}", e)
+                if (isCurrentAttempt(attemptId)) {
+                    _uiState.value = PairingState.Error(
+                        "Couldn't initialize the device identity key. Please update the app and try again."
+                    )
+                }
+                return@launch
+            }
+            val phonePubKeyB64 = Base64.encodeToString(phonePubKey, Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
+            attemptPairing(newRequest, phonePubKeyB64, attemptId, 0)
+        }
     }
 
     // Starts challenge-response handshake sequence from QR parameters
@@ -106,6 +172,7 @@ class PairingViewModel(
             pcNonceB64 = pcNonceB64,
             pcSigB64 = pcSigB64
         )
+        lastPairingRequest = pairingRequest
 
         viewModelScope.launch(Dispatchers.IO) {
             val phonePubKey = try {
@@ -232,7 +299,7 @@ class PairingViewModel(
                                 .setId(deviceId)
                                 .setName(requestData.pcName)
                                 .setOs(requestData.pcOs)
-                                .setHost(host)
+                                .setHost(requestData.hosts.joinToString(","))
                                 .setPort(requestData.port)
                                 .setToken(token)
                                 .setPublicKey(com.google.protobuf.ByteString.copyFrom(pcPublicKeyBytes))
@@ -282,7 +349,7 @@ class PairingViewModel(
                 } else {
                     "Network failure connecting: ${t.message ?: "unknown error"}"
                 }
-                _uiState.value = PairingState.Error(message)
+                _uiState.value = PairingState.Error(message, canRetryManual = true)
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {

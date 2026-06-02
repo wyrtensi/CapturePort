@@ -182,7 +182,8 @@ impl QrGenerator {
             .map_err(|e| anyhow::anyhow!("QR encode error: {:?}", e))?;
         
         let svg = Self::to_svg_string(&qr, 4);
-        let qr_svg_data = format!("data:image/svg+xml;utf8,{}", svg);
+        let base64_svg = BASE64_STANDARD.encode(svg.as_bytes());
+        let qr_svg_data = format!("data:image/svg+xml;base64,{}", base64_svg);
 
         Ok((pair_url, fingerprint, qr_svg_data, nonce))
     }

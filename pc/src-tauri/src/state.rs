@@ -1,10 +1,15 @@
 use std::collections::HashMap;
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use std::fs;
 use std::path::PathBuf;
 use tokio::sync::oneshot;
 use serde::{Serialize, Deserialize};
+
+fn default_true() -> bool {
+    true
+}
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct DeviceInfo {
@@ -17,6 +22,8 @@ pub struct DeviceInfo {
     pub public_key: [u8; 32],
     pub last_seen_ms: u64,
     pub pinned: bool,
+    #[serde(default = "default_true")]
+    pub exposed_to_mcp: bool,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -29,6 +36,10 @@ pub struct MediaItem {
     pub width: u32,
     pub height: u32,
     pub base64_data: Option<String>, // Inline data for Svelte view
+    #[serde(default)]
+    pub device_id: String,
+    #[serde(default)]
+    pub device_name: String,
 }
 
 // Active websocket transmission session
@@ -70,10 +81,11 @@ pub struct AppStateInner {
 #[derive(Clone)]
 pub struct AppState {
     pub inner: Arc<Mutex<AppStateInner>>,
+    pub close_to_tray: Arc<AtomicBool>,
 }
 
 impl AppState {
-    pub fn new(pubkey: [u8; 32], privkey: [u8; 32]) -> Self {
+    pub fn new(pubkey: [u8; 32], privkey: [u8; 32], close_to_tray: bool) -> Self {
         let state = Self {
             inner: Arc::new(Mutex::new(AppStateInner {
                 pc_public_key: pubkey,
@@ -85,6 +97,7 @@ impl AppState {
                 active_pairing_nonce: None,
                 mdns_advertiser: None,
             })),
+            close_to_tray: Arc::new(AtomicBool::new(close_to_tray)),
         };
         state.load_paired_devices();
         state

@@ -1,4 +1,6 @@
+use std::collections::HashMap;
 use std::path::Path;
+use std::sync::{Mutex, OnceLock};
 use anyhow::{Result, Context};
 use crate::clipboard::ClipboardSink;
 
@@ -10,13 +12,37 @@ impl LinuxSink {
         Self
     }
     
-    // Checks if a CLI command is available on PATH
+    fn percent_encode_path(path: &str) -> String {
+        let mut encoded = String::new();
+        for byte in path.as_bytes() {
+            match byte {
+                b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' => {
+                    encoded.push(*byte as char);
+                }
+                _ => {
+                    encoded.push_str(&format!("%{:02X}", byte));
+                }
+            }
+        }
+        encoded
+    }
+
+    // Checks if a CLI command is available on PATH.
+    // Results are cached process-wide via a OnceLock<Mutex<HashMap>>, so each
+    // command is only probed once for the lifetime of the process. Both
+    // positive and negative results are cached to avoid repeated `which`
+    // spawns for missing tools.
     fn command_exists(cmd: &str) -> bool {
-        std::process::Command::new("which")
-            .arg(cmd)
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
+        static CACHE: OnceLock<Mutex<HashMap<String, bool>>> = OnceLock::new();
+        let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+        let mut guard = cache.lock().unwrap();
+        *guard.entry(cmd.to_owned()).or_insert_with(|| {
+            std::process::Command::new("which")
+                .arg(cmd)
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false)
+        })
     }
 }
 
@@ -48,7 +74,9 @@ impl ClipboardSink for LinuxSink {
         let abs_path = std::fs::canonicalize(path)
             .context("Failed to resolve absolute path of target file")?;
             
-        let file_uri = format!("file://{}", abs_path.to_string_lossy());
+        let path_str = abs_path.to_string_lossy();
+        let encoded_path = Self::percent_encode_path(&path_str);
+        let file_uri = format!("file://{}\r\n", encoded_path);
         
         if Self::command_exists("wl-copy") {
             // Wayland copy

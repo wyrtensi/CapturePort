@@ -1,13 +1,18 @@
 package dev.captureport.app.network
 
 import android.content.Context
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.Base64
 import android.util.Log
+import androidx.camera.video.VideoRecordEvent
+import androidx.core.content.ContextCompat
+import dev.captureport.app.CapturePortApp
 import dev.captureport.app.core.crypto.Ed25519KeyManager
 import dev.captureport.app.data.PairedDevice
 import dev.captureport.app.network.EnvelopeCodec.Envelope
+import dev.captureport.app.transfer.TransferService
 import okhttp3.*
 import okio.ByteString
 import okio.ByteString.Companion.toByteString
@@ -29,101 +34,149 @@ class WsClient(
     ) -> Unit
 ) {
     private val client = OkHttpClient.Builder()
+        .connectTimeout(3, TimeUnit.SECONDS)
+        .pingInterval(10, TimeUnit.SECONDS) // Keep VPN / Wi-Fi connections alive
         .readTimeout(0, TimeUnit.MILLISECONDS) // Keep-alive socket
         .writeTimeout(10, TimeUnit.SECONDS)
         .build()
 
     private var webSocket: WebSocket? = null
-    private var isConnecting = false
     private var reconnectJob: Job? = null
+    private val connectionAttempt = java.util.concurrent.atomic.AtomicInteger(0)
+    private var isRecordingVideo = false
     
     private val _connectionState = MutableStateFlow("Disconnected")
     val connectionState: StateFlow<String> = _connectionState
 
     private var activeDevice: PairedDevice? = null
 
-    // Connects to target paired PC receiver
+    // Connects to target paired PC receiver using sequential host list retry fallback
     fun connect(device: PairedDevice) {
         activeDevice = device
         disconnect() // Cleanly shut down existing socket and cancel background loop
         
+        val attemptId = connectionAttempt.incrementAndGet()
         scope.launch(Dispatchers.IO) {
             reconnectJob = launch {
                 val attempt = java.util.concurrent.atomic.AtomicInteger(0)
                 val delayMs = java.util.concurrent.atomic.AtomicLong(1000L)
-                _connectionState.value = "Connecting..."
 
                 try {
-                    while (isActive) {
-                        val host = device.host
-                        val port = device.port
-                        val request = Request.Builder()
-                            .url("ws://$host:$port/ws")
-                            .build()
+                    while (isActive && connectionAttempt.get() == attemptId) {
+                        val hosts = device.host.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+                        var connected = false
 
-                        val listener = object : WebSocketListener() {
-                            override fun onOpen(webSocket: WebSocket, response: Response) {
-                                tracingLog("Socket opened, sending auth hello...")
-                                attempt.set(0)
-                                delayMs.set(1000L)
-                                
-                                // Send hello authentication envelope
-                                val helloId = ulid()
-                                val helloReq = Envelope(
-                                    t = "req",
-                                    id = helloId,
-                                    method = "hello",
-                                    params = JSONObject().apply {
-                                        put("device_id", device.id)
-                                        put("token", device.token)
+                        for (host in hosts) {
+                            if (!isActive || connectionAttempt.get() != attemptId) break
+                            _connectionState.value = "Connecting to $host..."
+
+                            val hostSuccess = CompletableDeferred<Boolean>()
+                            val helloId = ulid()
+
+                            val listener = object : WebSocketListener() {
+                                override fun onOpen(webSocket: WebSocket, response: Response) {
+                                    if (connectionAttempt.get() != attemptId) {
+                                        webSocket.cancel()
+                                        return
                                     }
-                                )
-                                webSocket.send(EnvelopeCodec.encodeEnvelope(helloReq))
-                            }
+                                    tracingLog("Socket opened to $host, sending auth hello...")
+                                    
+                                    // Send hello authentication envelope
+                                    val helloReq = Envelope(
+                                        t = "req",
+                                        id = helloId,
+                                        method = "hello",
+                                        params = JSONObject().apply {
+                                            put("device_id", device.id)
+                                            put("token", device.token)
+                                        }
+                                    )
+                                    webSocket.send(EnvelopeCodec.encodeEnvelope(helloReq))
+                                }
 
-                            override fun onMessage(webSocket: WebSocket, text: String) {
-                                scope.launch(Dispatchers.IO) {
-                                    handleTextMessage(webSocket, text)
+                                override fun onMessage(webSocket: WebSocket, text: String) {
+                                    if (connectionAttempt.get() != attemptId) {
+                                        webSocket.cancel()
+                                        return
+                                    }
+                                    scope.launch(Dispatchers.IO) {
+                                        try {
+                                            val envelope = EnvelopeCodec.decodeEnvelope(text)
+                                            if (envelope.t == "resp" && envelope.id == helloId) {
+                                                if (envelope.result != null) {
+                                                    val status = envelope.result.optString("status")
+                                                    if (status == "authorized") {
+                                                        _connectionState.value = "Connected"
+                                                        hostSuccess.complete(true)
+                                                    }
+                                                } else if (envelope.error != null) {
+                                                    Log.e("WsClient", "Auth rejected: ${envelope.error.optString("message")}")
+                                                    hostSuccess.complete(false)
+                                                }
+                                            }
+                                            handleTextMessage(webSocket, text)
+                                        } catch (e: Exception) {
+                                            Log.e("WsClient", "Auth error: ${e.message}")
+                                        }
+                                    }
+                                }
+
+                                override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                                    if (_connectionState.value == "Connected") {
+                                        _connectionState.value = "Disconnected"
+                                    }
+                                }
+
+                                override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                                    hostSuccess.complete(false)
                                 }
                             }
 
-                            override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
-                                _connectionState.value = "Disconnected"
-                            }
-
-                            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                                _connectionState.value = "Disconnected"
-                            }
-                        }
-
-                        tracingLog("Attempting connection to ws://$host:$port/ws...")
-                        val currentWs = client.newWebSocket(request, listener)
-                        webSocket = currentWs
-
-                        // Monitor state and wait if dropped
-                        val startTime = System.currentTimeMillis()
-                        while (_connectionState.value == "Connecting..." || _connectionState.value == "Connected") {
-                            delay(500)
-                            if (!isActive) break
+                            tracingLog("Attempting connection to ws://$host:${device.port}/ws...")
+                            val request = Request.Builder()
+                                .url("ws://$host:${device.port}/ws")
+                                .build()
+                            val currentWs = client.newWebSocket(request, listener)
                             
-                            // 5-second handshake timeout: if socket is open but remains unauthenticated
-                            if (_connectionState.value == "Connecting..." && (System.currentTimeMillis() - startTime) > 5000) {
-                                tracingLog("Authorization handshake timed out after 5s. Reconnecting...")
-                                currentWs.close(1000, "Handshake timeout")
+                            if (connectionAttempt.get() == attemptId) {
+                                webSocket = currentWs
+                            } else {
+                                currentWs.cancel()
                                 break
                             }
+
+                            val isOk = withTimeoutOrNull(3000) { hostSuccess.await() } ?: false
+                            if (isOk) {
+                                connected = true
+                                attempt.set(0)
+                                delayMs.set(1000L)
+                                while (_connectionState.value == "Connected" && isActive) {
+                                    delay(500)
+                                }
+                                break
+                            } else {
+                                currentWs.cancel()
+                            }
                         }
 
-                        attempt.incrementAndGet()
-                        _connectionState.value = "Reconnecting (Attempt ${attempt.get()})..."
-                        val jitter = (0..500).random()
-                        delay(delayMs.get() + jitter)
-                        delayMs.set((delayMs.get() * 2).coerceAtMost(30000L))
+                        if (!connected && connectionAttempt.get() == attemptId) {
+                            attempt.incrementAndGet()
+                            _connectionState.value = "Reconnecting (Attempt ${attempt.get()})..."
+                            val jitter = (0..500).random()
+                            delay(delayMs.get() + jitter)
+                            delayMs.set((delayMs.get() * 2).coerceAtMost(30000L))
+                        }
                     }
                 } finally {
-                    webSocket?.close(1000, "Connection cancelled")
-                    webSocket = null
-                    _connectionState.value = "Disconnected"
+                    if (connectionAttempt.get() == attemptId) {
+                        if (_connectionState.value == "Connected") {
+                            webSocket?.close(1000, "Connection cancelled")
+                        } else {
+                            webSocket?.cancel()
+                        }
+                        webSocket = null
+                        _connectionState.value = "Disconnected"
+                    }
                 }
             }
         }
@@ -160,7 +213,7 @@ class WsClient(
                         )
                         ws.send(EnvelopeCodec.encodeEnvelope(resp))
                     }
-                    "capture_photo" -> {
+                    "capture_photo", "capture_screenshot" -> {
                         // Trigger Camera Snap
                         onCaptureRequest(
                             { file ->
@@ -172,6 +225,78 @@ class WsClient(
                                 sendCaptureRejected(ws, envelope.id, reason)
                             }
                         )
+                    }
+                    "record_video" -> {
+                        val duration = envelope.params?.optLong("duration_seconds") ?: 10L
+                        val app = CapturePortApp.instance
+                        val activeCam = app.activeCameraController
+                        if (app.isCameraScreenVisible && activeCam != null) {
+                            if (isRecordingVideo || activeCam.isRecording) {
+                                scope.launch(Dispatchers.IO) {
+                                    sendCaptureRejected(ws, envelope.id, "Camera is already recording video")
+                                }
+                                return
+                            }
+                            isRecordingVideo = true
+                            scope.launch(Dispatchers.Main) {
+                                var videoFile: java.io.File? = null
+                                videoFile = activeCam.startVideoRecording { event ->
+                                    if (event is VideoRecordEvent.Finalize) {
+                                        isRecordingVideo = false
+                                        if (!event.hasError()) {
+                                            val intent = Intent(context, TransferService::class.java).apply {
+                                                putExtra("file_path", videoFile?.absolutePath)
+                                                putExtra("request_id", envelope.id)
+                                            }
+                                            ContextCompat.startForegroundService(context, intent)
+                                        } else {
+                                            scope.launch(Dispatchers.IO) {
+                                                sendCaptureRejected(ws, envelope.id, "Video recording error: ${event.error}")
+                                            }
+                                        }
+                                    }
+                                }
+                                delay(duration * 1000)
+                                activeCam.stopVideoRecording()
+                            }
+                        } else {
+                            scope.launch(Dispatchers.IO) {
+                                sendCaptureRejected(ws, envelope.id, "camera unavailable")
+                            }
+                        }
+                    }
+                    "get_device_clipboard" -> {
+                        scope.launch(Dispatchers.Main) {
+                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                            val clipData = clipboard.primaryClip
+                            val textContent = if (clipData != null && clipData.itemCount > 0) {
+                                clipData.getItemAt(0).text?.toString() ?: ""
+                            } else {
+                                ""
+                            }
+                            scope.launch(Dispatchers.IO) {
+                                val resp = Envelope(
+                                    t = "resp", id = envelope.id,
+                                    result = JSONObject().apply { put("text", textContent) }
+                                )
+                                ws.send(EnvelopeCodec.encodeEnvelope(resp))
+                            }
+                        }
+                    }
+                    "set_device_clipboard" -> {
+                        val newText = envelope.params?.optString("text") ?: ""
+                        scope.launch(Dispatchers.Main) {
+                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                            val clipData = android.content.ClipData.newPlainText("CapturePort", newText)
+                            clipboard.setPrimaryClip(clipData)
+                            scope.launch(Dispatchers.IO) {
+                                val resp = Envelope(
+                                    t = "resp", id = envelope.id,
+                                    result = JSONObject().apply { put("status", "success") }
+                                )
+                                ws.send(EnvelopeCodec.encodeEnvelope(resp))
+                            }
+                        }
                     }
                 }
             }
@@ -197,6 +322,8 @@ class WsClient(
     private fun uploadPhotoFile(ws: WebSocket, requestId: String, file: File) {
         try {
             val compressedBytes = compressPhoto(file)
+            // Clean up temp file after compression
+            if (file.exists()) file.delete()
             
             // 1. Send MCP Capture Binary Frame (streamId = 2)
             val metaJson = JSONObject().apply {
@@ -226,6 +353,7 @@ class WsClient(
             ws.send(EnvelopeCodec.encodeEnvelope(response))
             tracingLog("Photo capture uploaded successfully!")
         } catch (e: Exception) {
+            if (file.exists()) file.delete()
             Log.e("WsClient", "Upload photo failed: ${e.message}")
         }
     }
@@ -242,7 +370,7 @@ class WsClient(
         }
 
         val opts = BitmapFactory.Options().apply { inSampleSize = sampleSize }
-        val bmp = BitmapFactory.decodeFile(file.absolutePath, opts)
+        val bmp = BitmapFactory.decodeFile(file.absolutePath, opts) ?: return ByteArray(0)
 
         val outStream = ByteArrayOutputStream()
         bmp.compress(Bitmap.CompressFormat.JPEG, 80, outStream)
@@ -252,12 +380,15 @@ class WsClient(
 
     // Push standard user photo captures to current PC clipboard
     fun pushPhoto(file: File) {
-        val ws = webSocket ?: return
-        if (_connectionState.value != "Connected") return
+        val ws = webSocket ?: run { if (file.exists()) file.delete(); return }
+        if (_connectionState.value != "Connected") { if (file.exists()) file.delete(); return }
 
         scope.launch(Dispatchers.IO) {
             try {
                 val compressedBytes = compressPhoto(file)
+                // Clean up temp file after compression
+                if (file.exists()) file.delete()
+
                 val metaJson = JSONObject().apply {
                     put("type", "photo")
                 }.toString()
@@ -274,6 +405,7 @@ class WsClient(
                 ws.send(binaryFrame.toByteString())
                 tracingLog("Photo pushed to PC clipboard successfully!")
             } catch (e: Exception) {
+                if (file.exists()) file.delete()
                 Log.e("WsClient", "Push photo failed: ${e.message}")
             }
         }
@@ -283,7 +415,9 @@ class WsClient(
     fun getActiveWebSocket(): WebSocket? = webSocket
 
     fun disconnect() {
+        connectionAttempt.incrementAndGet()
         reconnectJob?.cancel()
+        reconnectJob = null
         webSocket?.close(1000, "User disconnected")
         webSocket = null
         _connectionState.value = "Disconnected"

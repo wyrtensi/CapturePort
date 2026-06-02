@@ -114,7 +114,12 @@ class TransferService : Service() {
                     )
 
                     // Write binary sequence directly to WebSocket
-                    ws.send(binaryFrame.toByteString())
+                    val sent = ws.send(binaryFrame.toByteString())
+                    if (!sent) {
+                        Log.e("TransferService", "WebSocket send failed, aborting transfer")
+                        updateNotificationFailure("Transfer failed: Connection lost")
+                        return
+                    }
 
                     // Update Notification Progress bar
                     val progress = ((chunkSeq.toFloat() / totalChunks.toFloat()) * 100).toInt()
@@ -139,6 +144,10 @@ class TransferService : Service() {
             Log.e("TransferService", "Streaming upload failed: ${e.message}")
             updateNotificationFailure("Video upload failed")
         } finally {
+            // Clean up temp video file from disk
+            if (file.exists()) {
+                file.delete()
+            }
             // Self terminate cleanly on complete
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()

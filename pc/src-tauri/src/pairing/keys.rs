@@ -50,4 +50,21 @@ impl KeystoreManager {
             }
         }
     }
+
+    // Forcefully overwrites or generates a new Ed25519 signing key in OS Keyring
+    pub fn regenerate_keys() -> Result<( [u8; 32], [u8; 32] )> {
+        let entry = Entry::new(Self::SERVICE_NAME, Self::KEY_NAME)
+            .context("Failed to open platform OS keyring entry")?;
+
+        let mut csprng = rand::thread_rng();
+        let signing_key = SigningKey::generate(&mut csprng);
+        let priv_array = signing_key.to_bytes();
+        let pub_array = signing_key.verifying_key().to_bytes();
+
+        let base64_priv = BASE64_STANDARD.encode(priv_array);
+        entry.set_password(&base64_priv)
+            .context("Failed to save private key to OS keyring")?;
+
+        Ok((pub_array, priv_array))
+    }
 }

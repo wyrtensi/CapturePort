@@ -80,6 +80,11 @@ impl SocketHandler {
                                     };
                                     state.register_session(device_id.to_string(), device_name.clone(), tx.clone());
 
+                                    // Emit devices-changed event
+                                    if let Some(h) = &app_handle {
+                                        let _ = h.emit("devices-changed", ());
+                                    }
+
                                     // Reply auth ok
                                     let ack = Envelope::new_response(envelope.id, json!({
                                         "status": "authorized",
@@ -221,7 +226,18 @@ impl SocketHandler {
                             };
 
                             if verified {
-                                let device_id = ulid::Ulid::new().to_string();
+                                let mut existing_id = None;
+                                {
+                                    let inner = state.inner.lock().unwrap();
+                                    for (id, dev) in &inner.paired_devices {
+                                        if dev.public_key == state_pair.pubkey_phone {
+                                            existing_id = Some(id.clone());
+                                            break;
+                                        }
+                                    }
+                                }
+
+                                let device_id = existing_id.unwrap_or_else(|| ulid::Ulid::new().to_string());
                                 let token = BASE64_URL_SAFE_NO_PAD.encode(rand::random::<[u8; 32]>());
 
                                 // Calculate fingerprint
@@ -234,7 +250,7 @@ impl SocketHandler {
                                     hash_bytes[4], hash_bytes[5], hash_bytes[6], hash_bytes[7]
                                 );
 
-                                let device_info = DeviceInfo {
+                                let mut device_info = DeviceInfo {
                                     id: device_id.clone(),
                                     name: state_pair.device_name.clone(),
                                     os: state_pair.os.clone(),
@@ -244,13 +260,22 @@ impl SocketHandler {
                                     public_key: state_pair.pubkey_phone,
                                     last_seen_ms: SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_millis() as u64,
                                     pinned: false,
+                                    exposed_to_mcp: true,
                                 };
 
                                 {
                                     let mut inner = state.inner.lock().unwrap();
+                                    if let Some(existing_dev) = inner.paired_devices.get(&device_id) {
+                                        device_info.pinned = existing_dev.pinned;
+                                        device_info.exposed_to_mcp = existing_dev.exposed_to_mcp;
+                                    }
                                     inner.paired_devices.insert(device_id.clone(), device_info);
                                 }
                                 state.save_paired_devices();
+
+                                if let Some(h) = &app_handle {
+                                    let _ = h.emit("devices-changed", ());
+                                }
 
                                 authenticated_device_id = Some(device_id.clone());
                                 state.register_session(device_id.clone(), state_pair.device_name.clone(), tx.clone());
@@ -291,7 +316,14 @@ impl SocketHandler {
                 }
                 Message::Binary(bytes) => {
                     // PROCESS BINARY TRANSMISSION
-                    if authenticated_device_id.is_some() {
+                    if let Some(ref dev_id) = authenticated_device_id {
+                        let dev_name = {
+                            let inner = state.inner.lock().unwrap();
+                            inner.paired_devices.get(dev_id)
+                                .map(|d| d.name.clone())
+                                .unwrap_or_else(|| "Unknown".to_string())
+                        };
+
                         if let Ok(frame) = BinaryFrame::decode(&bytes) {
                             match frame.stream_id {
                                 0 => {
@@ -329,6 +361,8 @@ impl SocketHandler {
                                             width: 1920, // Approximate standard downscale
                                             height: 1080,
                                             base64_data: Some(b64_data),
+                                            device_id: dev_id.clone(),
+                                            device_name: dev_name.clone(),
                                         };
 
                                         {
@@ -363,7 +397,7 @@ impl SocketHandler {
                                     let temp_dir = pictures_dir.join("temp");
                                     let _ = std::fs::create_dir_all(&temp_dir);
 
-                                    let temp_file_path = temp_dir.join(format!("{}.mp4.part", request_id));
+                                    let temp_file_path = temp_dir.join(format!("{}_{}.mp4.part", dev_id, request_id));
 
                                     // Append chunk payload to target partial file
                                     use std::io::Write;
@@ -407,6 +441,8 @@ impl SocketHandler {
                                                 width: 1280,
                                                 height: 720,
                                                 base64_data: None, // Video files don't require inline base64 previews
+                                                device_id: dev_id.clone(),
+                                                device_name: dev_name.clone(),
                                             };
 
                                             {
@@ -420,6 +456,13 @@ impl SocketHandler {
                                             if let Some(h) = &app_handle {
                                                 let _ = h.emit("media-received", media_item);
                                             }
+
+                                            // Complete pending oneshot request correlation if triggered remotely
+                                            state.complete_request(request_id, Ok(json!({
+                                                "status": "success",
+                                                "path": final_file_path.to_string_lossy().to_string(),
+                                                "size_bytes": size_bytes
+                                            })));
                                         }
                                     }
                                 }
@@ -455,6 +498,9 @@ impl SocketHandler {
         // Clean up connections on socket drops
         if let Some(device_id) = authenticated_device_id {
             state.unregister_session(&device_id);
+            if let Some(h) = &app_handle {
+                let _ = h.emit("devices-changed", ());
+            }
             tracing::info!("WebSocket connection closed for device: {}", device_id);
         }
 

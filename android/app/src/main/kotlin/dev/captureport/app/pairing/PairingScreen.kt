@@ -47,6 +47,7 @@ fun PairingScreen(
     }
     
     var isScanned by remember { mutableStateOf(false) }
+    var manualIp by remember { mutableStateOf("") }
     val latestUiState by rememberUpdatedState(uiState)
     val latestIsScanned by rememberUpdatedState(isScanned)
 
@@ -288,16 +289,56 @@ fun PairingScreen(
                                     fontSize = 14.sp,
                                     textAlign = TextAlign.Center
                                 )
-                                Spacer(modifier = Modifier.height(24.dp))
-                                Button(
-                                    onClick = {
-                                        isScanned = false
-                                        viewModel.resetScanning()
-                                    },
-                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF44464F)),
-                                    modifier = Modifier.fillMaxWidth().height(48.dp)
-                                ) {
-                                    Text("Retry Scanning", color = Color.White)
+                                Spacer(modifier = Modifier.height(16.dp))
+                                
+                                if (state.canRetryManual) {
+                                    OutlinedTextField(
+                                        value = manualIp,
+                                        onValueChange = { manualIp = it },
+                                        label = { Text("Manual IP Override (e.g. 192.168.1.5)") },
+                                        singleLine = true,
+                                        colors = OutlinedTextFieldDefaults.colors(
+                                            focusedBorderColor = Color(0xFFA4B4FF),
+                                            unfocusedBorderColor = Color(0xFF44464F),
+                                            focusedLabelColor = Color(0xFFA4B4FF),
+                                            unfocusedLabelColor = Color(0xFF8C8E96)
+                                        ),
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Button(
+                                            onClick = { viewModel.pairWithManualIp(manualIp) },
+                                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3B5BFF)),
+                                            modifier = Modifier.weight(1f).height(44.dp)
+                                        ) {
+                                            Text("Connect IP")
+                                        }
+                                        Button(
+                                            onClick = {
+                                                isScanned = false
+                                                viewModel.resetScanning()
+                                            },
+                                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF44464F)),
+                                            modifier = Modifier.weight(1f).height(44.dp)
+                                        ) {
+                                            Text("Retry Scan")
+                                        }
+                                    }
+                                } else {
+                                    Button(
+                                        onClick = {
+                                            isScanned = false
+                                            viewModel.resetScanning()
+                                        },
+                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3B5BFF)),
+                                        modifier = Modifier.fillMaxWidth().height(48.dp)
+                                    ) {
+                                        Text("Retry Scan")
+                                    }
                                 }
                             }
                             else -> {}
