@@ -27,9 +27,23 @@
   let mediaHistory = $state<any[]>([]);
   let pairedDevices = $state<any[]>([]);
   let settingsTab = $state<"general" | "network">("general");
-  let isSettingsOpen = $state(false);
   let manualIpInput = $state("");
   let firewallStatus = $state("");
+
+  // Custom Confirmation Modal State
+  let showConfirmModal = $state(false);
+  let confirmTitle = $state("");
+  let confirmMessage = $state("");
+  let confirmDangerLabel = $state("");
+  let onConfirmCallback = $state<(() => void) | null>(null);
+
+  function showConfirm(title: string, message: string, dangerLabel: string, onConfirm: () => void) {
+    confirmTitle = title;
+    confirmMessage = message;
+    confirmDangerLabel = dangerLabel;
+    onConfirmCallback = onConfirm;
+    showConfirmModal = true;
+  }
   let settings = $state({
     deviceName: "PC-Machine",
     port: 7878,
@@ -110,39 +124,48 @@
   }
 
   async function unpairDevice(id: string) {
-    if (confirm("Are you sure you want to unpair this device?")) {
-      try {
-        await invoke("unpair_device", { id });
-      } catch (e) {
-        alert("Failed to unpair device");
+    showConfirm(
+      "Unpair Device",
+      "Are you sure you want to unpair this device? It will no longer be able to capture and send media files to this PC.",
+      "Unpair",
+      async () => {
+        try {
+          await invoke("unpair_device", { id });
+        } catch (e) {
+          alert("Failed to unpair device");
+        }
       }
-    }
+    );
   }
 
   async function regenerateIdentity() {
-    if (confirm("Are you sure you want to regenerate the PC identity? This will invalidate all current pairings.")) {
-      pairingStatus = "Regenerating identity...";
-      try {
-        const info: any = await invoke("regenerate_pc_identity");
-        pairingQr = info.qr_svg;
-        pairingFingerprint = info.fingerprint;
-        pairingHosts = info.hosts || [];
-        pairingLocalHosts = info.local_hosts || [];
-        pairingInternetHost = info.internet_host || "";
-        pairingInternetPort = info.internet_port || settings.externalPort || settings.port;
-        pairingStatus = "Waiting for scanner...";
-        await loadPairedDevices();
-      } catch (e) {
-        pairingStatus = "Failed to regenerate identity";
+    showConfirm(
+      "Regenerate PC Identity",
+      "Are you sure you want to regenerate the PC identity? This will invalidate all current pairings, and you will need to re-pair all your devices.",
+      "Regenerate",
+      async () => {
+        pairingStatus = "Regenerating identity...";
+        try {
+          const info: any = await invoke("regenerate_pc_identity");
+          pairingQr = info.qr_svg;
+          pairingFingerprint = info.fingerprint;
+          pairingHosts = info.hosts || [];
+          pairingLocalHosts = info.local_hosts || [];
+          pairingInternetHost = info.internet_host || "";
+          pairingInternetPort = info.internet_port || settings.externalPort || settings.port;
+          pairingStatus = "Waiting for scanner...";
+          await loadPairedDevices();
+        } catch (e) {
+          pairingStatus = "Failed to regenerate identity";
+        }
       }
-    }
+    );
   }
 
   async function openSettings() {
     try {
       settings = await invoke("get_settings");
     } catch (e) {}
-    isSettingsOpen = true;
   }
 
   async function addManualIp() {
@@ -160,12 +183,12 @@
   }
 
   async function loadView(view: WindowView) {
+    windowLabel = view;
+
     if (view === "settings") {
       await openSettings();
       return;
     }
-
-    windowLabel = view;
 
     if (view === "pairing") {
       pairingStatus = "Waiting for scanner...";
@@ -345,7 +368,7 @@
           </svg>
           <span>Pairing</span>
         </button>
-        <button class="nav-btn settings-trigger-btn" class:active={isSettingsOpen} onclick={openSettings}>
+        <button class="nav-btn settings-trigger-btn" class:active={windowLabel === "settings"} onclick={() => void loadView("settings")}>
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d="M4 7h7" />
             <path d="M15 7h5" />
@@ -470,139 +493,246 @@
 
       {:else if windowLabel === "pairing"}
         <div class="pairing-content">
-          <div class="pairing-columns">
-            <div class="panel pairing-panel">
-              <header class="panel-header">
-                <div class="panel-title">
-                  <span class="title-icon" aria-hidden="true">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                      <rect x="7" y="2.5" width="10" height="19" rx="2.5" />
-                      <path d="M10 6.5h4" />
-                      <circle cx="12" cy="17.5" r="1" fill="currentColor" stroke="none" />
-                    </svg>
-                  </span>
-                  <h2>Pair New Device</h2>
-                </div>
-                <p>Scan this QR code from the CapturePort app on your phone</p>
-              </header>
-
-              <!-- svelte-ignore a11y_click_events_have_key_events -->
-              <!-- svelte-ignore a11y_no_static_element_interactions -->
-              <div class="qr-polaroid" onclick={refreshPairingInfo} title="Click to refresh QR Code">
-                <div class="qr-photo-area">
-                  {#if pairingQr}
-                    <img src={pairingQr} class="qr-graphic-img" alt="Pairing QR Code" />
-                  {:else}
-                    <div class="qr-placeholder spinner"></div>
-                  {/if}
-                </div>
-                <div class="qr-polaroid-caption">
-                  <span class="caption-title">Scan to Pair</span>
-                  <span class="caption-subtitle">Click to refresh</span>
-                </div>
+          <div class="panel pairing-panel">
+            <header class="panel-header">
+              <div class="panel-title">
+                <span class="title-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="7" y="2.5" width="10" height="19" rx="2.5" />
+                    <path d="M10 6.5h4" />
+                    <circle cx="12" cy="17.5" r="1" fill="currentColor" stroke="none" />
+                  </svg>
+                </span>
+                <h2>Pair New Device</h2>
               </div>
+              <p>Scan this QR code from the CapturePort app on your phone</p>
+            </header>
 
-              <div class="endpoint-mode-group" aria-label="QR endpoint mode">
-                <button class:active={pairingEndpointMode === "local-only"} onclick={() => setPairingEndpointMode("local-only")}>Local only</button>
-                <button class:active={pairingEndpointMode === "local-then-internet"} onclick={() => setPairingEndpointMode("local-then-internet")}>Local + Internet</button>
-                <button class:active={pairingEndpointMode === "internet-only"} onclick={() => setPairingEndpointMode("internet-only")}>Internet only</button>
+            <!-- svelte-ignore a11y_click_events_have_key_events -->
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <div class="qr-polaroid" onclick={refreshPairingInfo} title="Click to refresh QR Code">
+              <div class="qr-photo-area">
+                {#if pairingQr}
+                  <img src={pairingQr} class="qr-graphic-img" alt="Pairing QR Code" />
+                {:else}
+                  <div class="qr-placeholder spinner"></div>
+                {/if}
               </div>
-
-              <div class="manual-ip-section">
-                <form class="manual-ip-form" onsubmit={(e) => { e.preventDefault(); addManualIp(); }}>
-                  <div class="manual-ip-input-container">
-                    <input
-                      type="text"
-                      placeholder="Enter PC IP manually (e.g. 192.168.1.50)"
-                      bind:value={manualIpInput}
-                      class="manual-ip-input"
-                    />
-                    <button type="submit" class="manual-ip-btn">Set</button>
-                  </div>
-                </form>
+              <div class="qr-polaroid-caption">
+                <span class="caption-title">Scan to Pair</span>
+                <span class="caption-subtitle">Click to refresh</span>
               </div>
+            </div>
 
-              <div class="connection-details-card">
-                {#if pairingFingerprint}
-                  <div class="detail-section">
-                    <div class="detail-label-row">
-                      <span class="detail-label-title">
-                        <svg class="icon-small" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                          <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
-                          <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+            <div class="endpoint-mode-group" aria-label="QR endpoint mode">
+              <button class:active={pairingEndpointMode === "local-only"} onclick={() => setPairingEndpointMode("local-only")}>Local only</button>
+              <button class:active={pairingEndpointMode === "local-then-internet"} onclick={() => setPairingEndpointMode("local-then-internet")}>Local + Internet</button>
+              <button class:active={pairingEndpointMode === "internet-only"} onclick={() => setPairingEndpointMode("internet-only")}>Internet only</button>
+            </div>
+
+            <div class="manual-ip-section">
+              <form class="manual-ip-form" onsubmit={(e) => { e.preventDefault(); addManualIp(); }}>
+                <div class="manual-ip-input-container">
+                  <input
+                    type="text"
+                    placeholder="Enter PC IP manually (e.g. 192.168.1.50)"
+                    bind:value={manualIpInput}
+                    class="manual-ip-input"
+                  />
+                  <button type="submit" class="manual-ip-btn">Set</button>
+                </div>
+              </form>
+            </div>
+
+            <div class="connection-details-card">
+              {#if pairingFingerprint}
+                <div class="detail-section">
+                  <div class="detail-label-row">
+                    <span class="detail-label-title">
+                      <svg class="icon-small" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                        <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                      </svg>
+                      Device Fingerprint
+                    </span>
+                    <button class="copy-action-btn" onclick={() => copyToClipboard(pairingFingerprint, 'fingerprint')} title="Copy fingerprint">
+                      {#if copyTarget === 'fingerprint'}
+                        <span class="copied-indicator animate-scale">Copied!</span>
+                      {:else}
+                        <svg class="copy-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                          <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
                         </svg>
-                        Device Fingerprint
-                      </span>
-                      <button class="copy-action-btn" onclick={() => copyToClipboard(pairingFingerprint, 'fingerprint')} title="Copy fingerprint">
-                        {#if copyTarget === 'fingerprint'}
-                          <span class="copied-indicator animate-scale">Copied!</span>
-                        {:else}
-                          <svg class="copy-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
-                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
-                          </svg>
-                        {/if}
-                      </button>
-                    </div>
-                    <div class="detail-value-box">
-                      <code class="mono-text">{pairingFingerprint}</code>
-                    </div>
+                      {/if}
+                    </button>
                   </div>
-                {/if}
-
-                {#if pairingFingerprint && pairingHosts.length > 0}
-                  <div class="detail-divider"></div>
-                {/if}
-
-                {#if pairingHosts.length > 0}
-                  <div class="detail-section">
-                    <div class="detail-label-row">
-                      <span class="detail-label-title">
-                        <svg class="icon-small" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                          <rect x="2" y="2" width="20" height="8" rx="2" ry="2"/>
-                          <rect x="2" y="14" width="20" height="8" rx="2" ry="2"/>
-                          <line x1="6" y1="6" x2="6.01" y2="6"/>
-                          <line x1="6" y1="18" x2="6.01" y2="18"/>
-                        </svg>
-                        Manual IP Addresses
-                      </span>
-                    </div>
-                    <div class="ip-addresses-list">
-                      {#each pairingHosts as host}
-                        <div class="ip-address-row">
-                          <code class="mono-text-blue">{host}:{host === pairingInternetHost ? pairingInternetPort : settings.port}</code>
-                          <button class="copy-action-btn-small" onclick={() => copyToClipboard(`${host}:${host === pairingInternetHost ? pairingInternetPort : settings.port}`, host)} title="Copy Address">
-                            {#if copyTarget === host}
-                              <span class="copied-indicator-small animate-scale">Copied!</span>
-                            {:else}
-                              <svg class="copy-icon-small" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
-                                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
-                              </svg>
-                            {/if}
-                          </button>
-                        </div>
-                      {/each}
-                    </div>
+                  <div class="detail-value-box">
+                    <code class="mono-text">{pairingFingerprint}</code>
                   </div>
-                {/if}
-              </div>
-
-              {#if pairedDevices.length > 0}
-                <div class="pairing-warning">
-                  <p><strong>Notice:</strong> PC is already paired. Scanning will update pairing or add a new device.</p>
-                  <button class="action-btn text-danger" onclick={regenerateIdentity}>
-                    Regenerate PC Identity
-                  </button>
                 </div>
               {/if}
 
-              <footer class="pairing-footer">
-                <div class="status-indicator">
-                  <span class="pulse-dot"></span>
-                  <span class="status-text">{pairingStatus}</span>
+              {#if pairingFingerprint && pairingHosts.length > 0}
+                <div class="detail-divider"></div>
+              {/if}
+
+              {#if pairingHosts.length > 0}
+                <div class="detail-section">
+                  <div class="detail-label-row">
+                    <span class="detail-label-title">
+                      <svg class="icon-small" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="2" y="2" width="20" height="8" rx="2" ry="2"/>
+                        <rect x="2" y="14" width="20" height="8" rx="2" ry="2"/>
+                        <line x1="6" y1="6" x2="6.01" y2="6"/>
+                        <line x1="6" y1="18" x2="6.01" y2="18"/>
+                      </svg>
+                      Manual IP Addresses
+                    </span>
+                  </div>
+                  <div class="ip-addresses-list">
+                    {#each pairingHosts as host}
+                      <div class="ip-address-row">
+                        <code class="mono-text-blue">{host}:{host === pairingInternetHost ? pairingInternetPort : settings.port}</code>
+                        <button class="copy-action-btn-small" onclick={() => copyToClipboard(`${host}:${host === pairingInternetHost ? pairingInternetPort : settings.port}`, host)} title="Copy Address">
+                          {#if copyTarget === host}
+                            <span class="copied-indicator-small animate-scale">Copied!</span>
+                          {:else}
+                            <svg class="copy-icon-small" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                            </svg>
+                          {/if}
+                        </button>
+                      </div>
+                    {/each}
+                  </div>
                 </div>
-              </footer>
+              {/if}
+            </div>
+
+            {#if pairedDevices.length > 0}
+              <div class="pairing-warning">
+                <p><strong>Notice:</strong> PC is already paired. Scanning will update pairing or add a new device.</p>
+                <button class="action-btn text-danger" onclick={regenerateIdentity}>
+                  Regenerate PC Identity
+                </button>
+              </div>
+            {/if}
+
+            <footer class="pairing-footer">
+              <div class="status-indicator">
+                <span class="pulse-dot"></span>
+                <span class="status-text">{pairingStatus}</span>
+              </div>
+            </footer>
+          </div>
+        </div>
+      {:else if windowLabel === "settings"}
+        <div class="settings-content animate-fade">
+          <div class="content-header">
+            <h2>Settings</h2>
+            <p>Configure PC application and network settings</p>
+          </div>
+          
+          <div class="panel settings-panel-content">
+            <div class="settings-tabs">
+              <div class="tab-strip">
+                <button class:active={settingsTab === "general"} onclick={() => settingsTab = "general"}>General</button>
+                <button class:active={settingsTab === "network"} onclick={() => settingsTab = "network"}>Network</button>
+              </div>
+
+              <form class="settings-form tab-panel" onsubmit={(e) => { e.preventDefault(); saveSettings(); }}>
+                {#if settingsTab === "general"}
+                  <div class="form-group">
+                    <label for="device-name">Device Name</label>
+                    <input id="device-name" type="text" bind:value={settings.deviceName} />
+                  </div>
+
+                  <div class="form-group">
+                    <label for="port">WebSocket Port</label>
+                    <input id="port" type="number" bind:value={settings.port} />
+                  </div>
+
+                  <div class="form-group checkbox-group">
+                    <input id="mcp-enabled" type="checkbox" bind:checked={settings.mcpEnabled} />
+                    <label for="mcp-enabled">Enable MCP Camera Server for AI agents</label>
+                  </div>
+
+                  <div class="form-group checkbox-group">
+                    <input id="auto-start" type="checkbox" bind:checked={settings.autoStart} />
+                    <label for="auto-start">Launch automatically on system startup</label>
+                  </div>
+
+                  <div class="form-group checkbox-group">
+                    <input id="close-to-tray" type="checkbox" bind:checked={settings.closeToTray} />
+                    <label for="close-to-tray">Minimize to system tray instead of exiting on window close</label>
+                  </div>
+                {:else if settingsTab === "network"}
+                  <div class="form-group">
+                    <label for="local-ip-mode">Advertised Local IP</label>
+                    <select id="local-ip-mode" bind:value={settings.localIpMode}>
+                      <option value="auto">Auto</option>
+                      <option value="custom">Custom</option>
+                    </select>
+                  </div>
+                  <div class="form-group">
+                    <label for="custom-local-host">Custom Local Host</label>
+                    <div class="inline-input">
+                      <input id="custom-local-host" type="text" bind:value={settings.customLocalHost} placeholder="192.168.0.111" />
+                      <button type="button" class="secondary-btn" onclick={detectLocalIp}>Detect</button>
+                    </div>
+                  </div>
+                  <div class="form-group checkbox-group">
+                    <input id="external-enabled" type="checkbox" bind:checked={settings.externalEnabled} />
+                    <label for="external-enabled">Enable internet endpoint in QR codes</label>
+                  </div>
+                  <div class="form-group">
+                    <label for="external-host">External Host / DDNS</label>
+                    <div class="inline-input">
+                      <input id="external-host" type="text" bind:value={settings.externalHost} placeholder="capture.example.net" />
+                      <button type="button" class="secondary-btn" onclick={detectPublicIp}>Detect</button>
+                    </div>
+                  </div>
+                  <div class="form-group">
+                    <label for="external-port">External Port</label>
+                    <div class="inline-input">
+                      <input id="external-port" type="number" bind:value={settings.externalPort} />
+                      <button type="button" class="secondary-btn" onclick={openFirewallPort}>Open</button>
+                    </div>
+                  </div>
+                  {#if firewallStatus}
+                    <p class="settings-note">{firewallStatus}</p>
+                  {/if}
+                  <p class="settings-note">Router port forwarding is manual. Forward the external TCP port to this PC local address and WebSocket port.</p>
+                {/if}
+
+                <button type="submit" class="submit-btn">Save Configurations</button>
+
+                <div class="save-status-container">
+                  {#if saveStatus === 'saving'}
+                    <div class="save-status-message saving animate-fade">
+                      <span class="spinner-small" aria-hidden="true"></span>
+                      <span>Saving configurations...</span>
+                    </div>
+                  {:else if saveStatus === 'success'}
+                    <div class="save-status-message success animate-scale">
+                      <svg class="status-icon-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <polyline points="20 6 9 17 4 12" />
+                      </svg>
+                      <span>Configurations saved successfully!</span>
+                    </div>
+                  {:else if saveStatus === 'error'}
+                    <div class="save-status-message error animate-scale">
+                      <svg class="status-icon-error" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <circle cx="12" cy="12" r="10" />
+                        <line x1="12" y1="8" x2="12" y2="12" />
+                        <line x1="12" y1="16" x2="12.01" y2="16" />
+                      </svg>
+                      <span>Failed to save: {saveErrorMessage}</span>
+                    </div>
+                  {/if}
+                </div>
+              </form>
             </div>
           </div>
         </div>
@@ -610,125 +740,30 @@
     </section>
   </div>
 
-  {#if isSettingsOpen}
+  {#if showConfirmModal}
     <!-- svelte-ignore a11y_click_events_have_key_events -->
     <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div class="settings-backdrop" transition:fade onclick={() => isSettingsOpen = false}></div>
-  {/if}
-
-  <div class="settings-drawer" class:open={isSettingsOpen}>
-    <div class="drawer-header">
-      <h3>Settings</h3>
-      <button class="close-drawer-btn" onclick={() => isSettingsOpen = false} aria-label="Close settings">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <line x1="18" y1="6" x2="6" y2="18"></line>
-          <line x1="6" y1="6" x2="18" y2="18"></line>
-        </svg>
-      </button>
-    </div>
-    
-    <div class="drawer-content">
-      <div class="settings-tabs">
-        <div class="tab-strip">
-          <button class:active={settingsTab === "general"} onclick={() => settingsTab = "general"}>General</button>
-          <button class:active={settingsTab === "network"} onclick={() => settingsTab = "network"}>Network</button>
+    <div class="modal-backdrop" transition:fade onclick={() => showConfirmModal = false}>
+      <div class="confirm-modal-card animate-scale" onclick={(e) => e.stopPropagation()}>
+        <div class="modal-warning-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+            <line x1="12" y1="9" x2="12" y2="13"></line>
+            <line x1="12" y1="17" x2="12.01" y2="17"></line>
+          </svg>
         </div>
-
-        <form class="settings-form tab-panel" onsubmit={(e) => { e.preventDefault(); saveSettings(); }}>
-          {#if settingsTab === "general"}
-            <div class="form-group">
-              <label for="device-name">Device Name</label>
-              <input id="device-name" type="text" bind:value={settings.deviceName} />
-            </div>
-
-            <div class="form-group">
-              <label for="port">WebSocket Port</label>
-              <input id="port" type="number" bind:value={settings.port} />
-            </div>
-
-            <div class="form-group checkbox-group">
-              <input id="mcp-enabled" type="checkbox" bind:checked={settings.mcpEnabled} />
-              <label for="mcp-enabled">Enable MCP Camera Server for AI agents</label>
-            </div>
-
-            <div class="form-group checkbox-group">
-              <input id="auto-start" type="checkbox" bind:checked={settings.autoStart} />
-              <label for="auto-start">Launch automatically on system startup</label>
-            </div>
-
-            <div class="form-group checkbox-group">
-              <input id="close-to-tray" type="checkbox" bind:checked={settings.closeToTray} />
-              <label for="close-to-tray">Minimize to system tray instead of exiting on window close</label>
-            </div>
-          {:else if settingsTab === "network"}
-            <div class="form-group">
-              <label for="local-ip-mode">Advertised Local IP</label>
-              <select id="local-ip-mode" bind:value={settings.localIpMode}>
-                <option value="auto">Auto</option>
-                <option value="custom">Custom</option>
-              </select>
-            </div>
-            <div class="form-group">
-              <label for="custom-local-host">Custom Local Host</label>
-              <div class="inline-input">
-                <input id="custom-local-host" type="text" bind:value={settings.customLocalHost} placeholder="192.168.0.111" />
-                <button type="button" class="secondary-btn" onclick={detectLocalIp}>Detect</button>
-              </div>
-            </div>
-            <div class="form-group checkbox-group">
-              <input id="external-enabled" type="checkbox" bind:checked={settings.externalEnabled} />
-              <label for="external-enabled">Enable internet endpoint in QR codes</label>
-            </div>
-            <div class="form-group">
-              <label for="external-host">External Host / DDNS</label>
-              <div class="inline-input">
-                <input id="external-host" type="text" bind:value={settings.externalHost} placeholder="capture.example.net" />
-                <button type="button" class="secondary-btn" onclick={detectPublicIp}>Detect</button>
-              </div>
-            </div>
-            <div class="form-group">
-              <label for="external-port">External Port</label>
-              <div class="inline-input">
-                <input id="external-port" type="number" bind:value={settings.externalPort} />
-                <button type="button" class="secondary-btn" onclick={openFirewallPort}>Open</button>
-              </div>
-            </div>
-            {#if firewallStatus}
-              <p class="settings-note">{firewallStatus}</p>
-            {/if}
-            <p class="settings-note">Router port forwarding is manual. Forward the external TCP port to this PC local address and WebSocket port.</p>
-          {/if}
-
-          <button type="submit" class="submit-btn">Save Configurations</button>
-
-          <div class="save-status-container">
-            {#if saveStatus === 'saving'}
-              <div class="save-status-message saving animate-fade">
-                <span class="spinner-small" aria-hidden="true"></span>
-                <span>Saving configurations...</span>
-              </div>
-            {:else if saveStatus === 'success'}
-              <div class="save-status-message success animate-scale">
-                <svg class="status-icon-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <polyline points="20 6 9 17 4 12" />
-                </svg>
-                <span>Configurations saved successfully!</span>
-              </div>
-            {:else if saveStatus === 'error'}
-              <div class="save-status-message error animate-scale">
-                <svg class="status-icon-error" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <circle cx="12" cy="12" r="10" />
-                  <line x1="12" y1="8" x2="12" y2="12" />
-                  <line x1="12" y1="16" x2="12.01" y2="16" />
-                </svg>
-                <span>Failed to save: {saveErrorMessage}</span>
-              </div>
-            {/if}
-          </div>
-        </form>
+        <h3 class="modal-title">{confirmTitle}</h3>
+        <p class="modal-message">{confirmMessage}</p>
+        <div class="modal-actions">
+          <button class="secondary-btn" onclick={() => showConfirmModal = false}>Cancel</button>
+          <button class="danger-btn" onclick={() => {
+            if (onConfirmCallback) onConfirmCallback();
+            showConfirmModal = false;
+          }}>{confirmDangerLabel}</button>
+        </div>
       </div>
     </div>
-  </div>
+  {/if}
 </main>
 
 <style>
@@ -818,7 +853,6 @@
   .pairing-panel {
     flex: 1 1 340px;
     min-width: 320px;
-    max-width: 460px;
     background: rgba(13, 14, 18, 0.45);
     backdrop-filter: blur(24px) saturate(150%);
     -webkit-backdrop-filter: blur(24px) saturate(150%);
@@ -904,7 +938,7 @@
       0 0 30px rgba(59, 91, 255, 0.08),
       inset 0 1px 1px rgba(255, 255, 255, 0.05);
     margin-bottom: 24px;
-    width: 200px;
+    width: 280px;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -1960,84 +1994,198 @@
     }
   }
 
-  /* Settings Drawer Styles */
-  .settings-backdrop {
+  /* Confirmation Modal Custom CSS */
+  .modal-backdrop {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.4);
-    backdrop-filter: blur(8px);
-    z-index: 99;
-  }
-
-  .settings-drawer {
-    position: fixed;
-    top: 0;
-    right: 0;
-    width: min(380px, 100vw);
-    height: 100vh;
-    background: rgba(13, 14, 18, 0.65);
-    backdrop-filter: blur(30px) saturate(180%);
-    -webkit-backdrop-filter: blur(30px) saturate(180%);
-    border-left: 1px solid rgba(255, 255, 255, 0.08);
-    box-shadow: 
-      -10px 0 40px rgba(0, 0, 0, 0.5),
-      inset 1px 0 0 rgba(255, 255, 255, 0.05);
-    z-index: 100;
-    transform: translateX(100%);
-    transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1);
-    display: flex;
-    flex-direction: column;
-    box-sizing: border-box;
-    padding: 24px;
-  }
-
-  .settings-drawer.open {
-    transform: translateX(0);
-  }
-
-  .drawer-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 24px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-    padding-bottom: 16px;
-  }
-
-  .drawer-header h3 {
-    margin: 0;
-    font-size: 20px;
-    font-weight: 700;
-    color: #FFFFFF;
-  }
-
-  .close-drawer-btn {
-    background: none;
-    border: none;
-    color: #8C8E96;
-    cursor: pointer;
+    background: rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(12px);
+    z-index: 150;
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 6px;
-    border-radius: 8px;
+    padding: 20px;
+  }
+
+  .confirm-modal-card {
+    background: rgba(13, 14, 18, 0.75);
+    backdrop-filter: blur(30px) saturate(180%);
+    -webkit-backdrop-filter: blur(30px) saturate(180%);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    box-shadow: 
+      0 24px 60px rgba(0, 0, 0, 0.6),
+      0 0 40px rgba(59, 91, 255, 0.05),
+      inset 0 1px 1px rgba(255, 255, 255, 0.05);
+    border-radius: 24px;
+    padding: 32px;
+    max-width: 420px;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    box-sizing: border-box;
+  }
+
+  .modal-warning-icon {
+    width: 56px;
+    height: 56px;
+    background: rgba(255, 92, 92, 0.1);
+    color: #FF5C5C;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 20px;
+    box-shadow: 0 0 20px rgba(255, 92, 92, 0.15);
+  }
+
+  .modal-warning-icon svg {
+    width: 28px;
+    height: 28px;
+  }
+
+  .modal-title {
+    font-size: 20px;
+    font-weight: 700;
+    color: #FFFFFF;
+    margin: 0 0 12px 0;
+    letter-spacing: -0.4px;
+  }
+
+  .modal-message {
+    font-size: 14px;
+    color: #8C8E96;
+    line-height: 1.5;
+    margin: 0 0 28px 0;
+  }
+
+  .modal-actions {
+    display: flex;
+    gap: 12px;
+    width: 100%;
+  }
+
+  .modal-actions button {
+    flex: 1;
+    height: 42px;
+    border-radius: 12px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
     transition: all 0.2s;
   }
 
-  .close-drawer-btn:hover {
+  .modal-actions .secondary-btn {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    color: #C8CAD2;
+  }
+
+  .modal-actions .secondary-btn:hover {
     background: rgba(255, 255, 255, 0.06);
+    border-color: rgba(255, 255, 255, 0.16);
     color: #FFFFFF;
   }
 
-  .close-drawer-btn svg {
-    width: 18px;
-    height: 18px;
+  .modal-actions .danger-btn {
+    background: #FF5C5C;
+    border: none;
+    color: #FFFFFF;
+    box-shadow: 0 4px 12px rgba(255, 92, 92, 0.25);
   }
 
-  .drawer-content {
+  .modal-actions .danger-btn:hover {
+    background: #FF7373;
+    transform: translateY(-1px);
+    box-shadow: 0 6px 16px rgba(255, 92, 92, 0.35);
+  }
+
+  .modal-actions .danger-btn:active {
+    transform: translateY(0);
+  }
+
+  /* Settings Area Custom CSS */
+  .settings-content {
+    width: 100%;
+    max-width: 680px;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    box-sizing: border-box;
+  }
+
+  .settings-panel-content {
+    background: rgba(13, 14, 18, 0.45);
+    backdrop-filter: blur(24px) saturate(150%);
+    -webkit-backdrop-filter: blur(24px) saturate(150%);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 28px;
+    padding: 32px;
+    box-shadow: 
+      0 4px 30px rgba(0, 0, 0, 0.3),
+      inset 0 1px 1px rgba(255, 255, 255, 0.03),
+      0 24px 48px rgba(0, 0, 0, 0.4);
+    box-sizing: border-box;
+  }
+
+  .settings-tabs {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+    width: 100%;
+  }
+
+  .tab-strip {
+    display: flex;
+    gap: 8px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    padding-bottom: 12px;
+  }
+
+  .tab-strip button {
+    border: 1px solid transparent;
+    background: transparent;
+    color: #8C8E96;
+    font-size: 14px;
+    font-weight: 600;
+    padding: 8px 16px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .tab-strip button:hover {
+    color: #FFFFFF;
+    background: rgba(255, 255, 255, 0.04);
+  }
+
+  .tab-strip button.active {
+    color: #A4B4FF;
+    background: rgba(59, 91, 255, 0.1);
+    border: 1px solid rgba(59, 91, 255, 0.2);
+  }
+
+  .settings-form {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+
+  .settings-note {
+    font-size: 12px;
+    color: #8C8E96;
+    line-height: 1.5;
+    margin: 4px 0 0 0;
+  }
+
+  .inline-input {
+    display: flex;
+    gap: 12px;
+  }
+
+  .inline-input input {
     flex: 1;
-    overflow-y: auto;
-    min-height: 0;
   }
 
   /* Settings Trigger Button Glow & Spin effect */

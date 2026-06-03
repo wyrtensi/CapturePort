@@ -13,8 +13,8 @@ android {
         applicationId = "dev.captureport.app"
         minSdk = 33 // Target Android 13+ as approved, natively supporting Ed25519 Keystore
         targetSdk = 34
-        versionCode = 15
-        versionName = "0.2.4"
+        versionCode = 16
+        versionName = "0.2.5"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {

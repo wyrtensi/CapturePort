@@ -9,6 +9,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.view.PreviewView
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -222,87 +223,211 @@ fun ReceiversScreen(
                 .statusBarsPadding()
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.End
+            horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            if (isRecording) {
-                val infiniteTransition = rememberInfiniteTransition()
-                val dotAlpha by infiniteTransition.animateFloat(
-                    initialValue = 1f, targetValue = 0.2f,
-                    animationSpec = infiniteRepeatable(tween(1000, easing = LinearEasing), RepeatMode.Reverse)
-                )
-                Row(
-                    modifier = Modifier
-                        .background(Color(0x99FF3B30), RoundedCornerShape(16.dp))
-                        .padding(horizontal = 10.dp, vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(Color.White.copy(alpha = dotAlpha)))
-                    Spacer(modifier = Modifier.width(5.dp))
-                    Text(
-                        text = "REC ${formatDuration(recordingDuration)}",
-                        color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace
+            // Left side — REC timer (or empty weight to keep gear right)
+            Row(
+                modifier = Modifier.weight(1f),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                if (isRecording) {
+                    val infiniteTransition = rememberInfiniteTransition()
+                    val dotAlpha by infiniteTransition.animateFloat(
+                        initialValue = 1f, targetValue = 0.2f,
+                        animationSpec = infiniteRepeatable(tween(1000, easing = LinearEasing), RepeatMode.Reverse)
                     )
+                    Row(
+                        modifier = Modifier
+                            .background(Color(0x99FF3B30), RoundedCornerShape(16.dp))
+                            .padding(horizontal = 10.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(Color.White.copy(alpha = dotAlpha)))
+                        Spacer(modifier = Modifier.width(5.dp))
+                        Text(
+                            text = "REC ${formatDuration(recordingDuration)}",
+                            color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace
+                        )
+                    }
                 }
-                Spacer(modifier = Modifier.width(8.dp))
             }
 
-            Box {
-                IconButton(
-                    onClick = { showSettingsMenu = true },
-                    colors = IconButtonDefaults.iconButtonColors(containerColor = Color(0xD91F2128)),
-                    modifier = Modifier
-                        .size(42.dp)
-                        .border(1.dp, Color(0xFF2C2E35), CircleShape)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Settings,
-                        contentDescription = "Receiver settings",
-                        tint = Color.White,
-                        modifier = Modifier.size(18.dp)
+            // Right side — settings gear
+            IconButton(
+                onClick = { showSettingsMenu = true },
+                colors = IconButtonDefaults.iconButtonColors(containerColor = Color(0xD91F2128)),
+                modifier = Modifier
+                    .size(42.dp)
+                    .border(1.dp, Color(0xFF2C2E35), CircleShape)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Settings,
+                    contentDescription = "Receiver settings",
+                    tint = Color.White,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+        }
+
+        // ── Settings bottom sheet overlay ──
+        AnimatedVisibility(
+            visible = showSettingsMenu,
+            enter = fadeIn(animationSpec = tween(250)),
+            exit = fadeOut(animationSpec = tween(200))
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color(0x99000000))
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null
+                    ) { showSettingsMenu = false }
+            )
+        }
+
+        AnimatedVisibility(
+            visible = showSettingsMenu,
+            modifier = Modifier.align(Alignment.BottomCenter),
+            enter = slideInVertically(animationSpec = tween(300, easing = FastOutSlowInEasing)) { it } + fadeIn(tween(200)),
+            exit = slideOutVertically(animationSpec = tween(250, easing = FastOutSlowInEasing)) { it } + fadeOut(tween(150))
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .navigationBarsPadding()
+                    .clip(RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp))
+                    .background(Color(0xF2101114))
+                    .border(
+                        BorderStroke(1.dp, Color(0x1AFFFFFF)),
+                        RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
                     )
-                }
-                DropdownMenu(
-                    expanded = showSettingsMenu,
-                    onDismissRequest = { showSettingsMenu = false },
+                    .padding(bottom = 16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                // Drag handle
+                Box(
                     modifier = Modifier
-                        .background(Color(0xFF1B1C20))
-                        .border(1.dp, Color(0x1AFFFFFF), RoundedCornerShape(12.dp))
-                ) {
-                    CameraCapturePolicy.values().forEach { policy ->
-                        DropdownMenuItem(
-                            text = { Text(policy.label, color = Color.White, fontSize = 13.sp) },
-                            onClick = {
+                        .padding(top = 10.dp, bottom = 16.dp)
+                        .width(36.dp)
+                        .height(4.dp)
+                        .clip(RoundedCornerShape(2.dp))
+                        .background(Color(0x4DFFFFFF))
+                )
+
+                // Camera mode section
+                Text(
+                    text = "Camera Mode",
+                    color = Color(0xFF8C8E96),
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp, vertical = 4.dp)
+                )
+                CameraCapturePolicy.values().forEach { policy ->
+                    val isActive = currentPolicy == policy
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 3.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(if (isActive) Color(0x263B5BFF) else Color.Transparent)
+                            .clickable {
                                 app.applyCameraCapturePolicy(policy)
                                 currentPolicy = policy
                                 showSettingsMenu = false
                             }
+                            .padding(horizontal = 16.dp, vertical = 12.dp)
+                    ) {
+                        Text(
+                            text = policy.label,
+                            color = if (isActive) Color(0xFFA4B4FF) else Color.White,
+                            fontSize = 14.sp,
+                            fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal
                         )
                     }
-                    HorizontalDivider(color = Color(0x1AFFFFFF))
-                    ReceiverConnectionMode.values().forEach { mode ->
-                        DropdownMenuItem(
-                            text = {
-                                Text(
-                                    mode.label,
-                                    color = if (receiverConnectionMode == mode) Color(0xFFA4B4FF) else Color.White,
-                                    fontSize = 13.sp
-                                )
-                            },
-                            onClick = {
+                }
+
+                // Divider
+                HorizontalDivider(
+                    color = Color(0x1AFFFFFF),
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
+                )
+
+                // Connection mode section
+                Text(
+                    text = "Connection Mode",
+                    color = Color(0xFF8C8E96),
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp, vertical = 4.dp)
+                )
+                ReceiverConnectionMode.values().forEach { mode ->
+                    val isActive = receiverConnectionMode == mode
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 3.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(if (isActive) Color(0x263B5BFF) else Color.Transparent)
+                            .clickable {
                                 app.applyReceiverConnectionMode(mode)
                                 receiverConnectionMode = mode
                                 showSettingsMenu = false
                             }
+                            .padding(horizontal = 16.dp, vertical = 12.dp)
+                    ) {
+                        Text(
+                            text = mode.label,
+                            color = if (isActive) Color(0xFFA4B4FF) else Color.White,
+                            fontSize = 14.sp,
+                            fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal
                         )
                     }
-                    HorizontalDivider(color = Color(0x1AFFFFFF))
-                    DropdownMenuItem(
-                        text = { Text("Add & Pair a New PC", color = Color.White, fontSize = 13.sp) },
-                        onClick = {
+                }
+
+                // Divider
+                HorizontalDivider(
+                    color = Color(0x1AFFFFFF),
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
+                )
+
+                // Add & Pair button
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 3.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(
+                            brush = Brush.linearGradient(
+                                colors = listOf(Color(0xFF3B5BFF), Color(0xFF6B82FF))
+                            )
+                        )
+                        .clickable {
                             showSettingsMenu = false
                             onNavigateToPairing()
                         }
-                    )
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.Add,
+                            contentDescription = "Add",
+                            tint = Color.White,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Add & Pair a New PC",
+                            color = Color.White,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
                 }
             }
         }

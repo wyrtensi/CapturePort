@@ -347,7 +347,7 @@ fun PairingScreen(
                         .wrapContentHeight()
                 ) {
                     Column(
-                        modifier = Modifier.padding(24.dp),
+                        modifier = Modifier.fillMaxWidth().padding(24.dp),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         when (val state = uiState) {
@@ -362,7 +362,8 @@ fun PairingScreen(
                                     text = "Connecting to PC...",
                                     color = Color.White,
                                     fontSize = 15.sp,
-                                    fontWeight = FontWeight.SemiBold
+                                    fontWeight = FontWeight.SemiBold,
+                                    textAlign = TextAlign.Center
                                 )
                             }
                             PairingState.Handshaking -> {
@@ -376,7 +377,8 @@ fun PairingScreen(
                                     text = "Authenticating handshake...",
                                     color = Color.White,
                                     fontSize = 15.sp,
-                                    fontWeight = FontWeight.SemiBold
+                                    fontWeight = FontWeight.SemiBold,
+                                    textAlign = TextAlign.Center
                                 )
                             }
                             is PairingState.FingerprintVerification -> {
@@ -441,7 +443,8 @@ fun PairingScreen(
                                     text = "Pairing Failed",
                                     color = Color(0xFFFF8A80),
                                     fontSize = 18.sp,
-                                    fontWeight = FontWeight.Bold
+                                    fontWeight = FontWeight.Bold,
+                                    textAlign = TextAlign.Center
                                 )
                                 Spacer(modifier = Modifier.height(8.dp))
                                 Text(
