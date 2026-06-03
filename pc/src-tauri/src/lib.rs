@@ -13,6 +13,7 @@ pub mod ws;
 use crate::pairing::qr::{EndpointMode, PairingEndpoints, QrGenerator};
 use crate::state::AppState;
 use serde_json::json;
+use std::str::FromStr;
 use std::sync::atomic::Ordering;
 use tauri::{Emitter, Manager};
 
@@ -321,7 +322,7 @@ pub(crate) fn local_pairing_hosts(settings: &AppSettings) -> Vec<String> {
 }
 
 fn pairing_endpoints(settings: &AppSettings, endpoint_mode: Option<&str>) -> PairingEndpoints {
-    let mode = EndpointMode::from_str(endpoint_mode.unwrap_or("local-only"));
+    let mode = EndpointMode::from_str(endpoint_mode.unwrap_or("local-only")).unwrap();
     let internet_host = settings
         .external_enabled
         .then(|| settings.external_host.trim().to_string())

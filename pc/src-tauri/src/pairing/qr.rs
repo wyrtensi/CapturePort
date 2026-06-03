@@ -12,14 +12,19 @@ pub enum EndpointMode {
     InternetOnly,
 }
 
-impl EndpointMode {
-    pub fn from_str(value: &str) -> Self {
-        match value {
+impl std::str::FromStr for EndpointMode {
+    type Err = std::convert::Infallible;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        Ok(match value {
             "internet-only" => Self::InternetOnly,
             "local-then-internet" => Self::LocalThenInternet,
             _ => Self::LocalOnly,
-        }
+        })
     }
+}
+
+impl EndpointMode {
 
     pub fn as_str(&self) -> &'static str {
         match self {
