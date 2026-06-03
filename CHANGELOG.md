@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.0] - 2026-06-04
+### Added
+- Aligned REC timer badge with the connection route status badge vertically on the Android screen.
+- Compacted settings drawer (Receiver Control) to fit on one screen by hiding descriptions and using horizontal grids of tiles for Camera capture and Connection route settings.
+- Styled the "Add & Pair a New PC" button inside the drawer to use a transparent/dark background with a solid border, matching other dashboard controls.
+- Bumped PC version files (`Cargo.toml`, `package.json`, `tauri.conf.json`) to v0.3.0 to match the Android client.
+- Fixed a silent test execution bug in the layout verification script where the `.settings-drawer` DOM selector was broken in Svelte 5.
+- Rewrote `pc/README.md` to provide comprehensive development setup, CLI flags, configuration paths, and features.
+- Audited and updated the root `README.md` to match the actual codebase implementation (SSE proxy removal, cleartext globally allowed on Android, pairing flow, asset names).
+
+## [0.2.9] - 2026-06-03
+### Changed
+- Incremented Android client build versions.
+
 ## [0.2.3] - 2026-06-03
 ### Changed
 - Refactored capture port rendering pipeline.

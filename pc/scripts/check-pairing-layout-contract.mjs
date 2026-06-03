@@ -67,7 +67,7 @@ const pairingMarkup = source.slice(
   source.indexOf('</section>')
 );
 const settingsMarkup = source.slice(
-  source.indexOf('<div class="settings-drawer"'),
+  source.indexOf('<div class="settings-content'),
   source.indexOf('</main>')
 );
 const sidebarMarkup = source.slice(
