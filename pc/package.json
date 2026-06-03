@@ -1,6 +1,6 @@
 {
   "name": "captureport-desktop",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "",
   "type": "module",
   "scripts": {
@@ -8,6 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+    "test:layout": "node scripts/check-pairing-layout-contract.mjs",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
     "tauri": "tauri"
   },

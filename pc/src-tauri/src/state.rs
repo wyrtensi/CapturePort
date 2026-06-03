@@ -1,11 +1,11 @@
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fs;
+use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
-use std::fs;
-use std::path::PathBuf;
 use tokio::sync::oneshot;
-use serde::{Serialize, Deserialize};
 
 fn default_true() -> bool {
     true
@@ -141,13 +141,21 @@ impl AppState {
     }
 
     // Register active device session
-    pub fn register_session(&self, device_id: String, name: String, tx: tokio::sync::mpsc::Sender<axum::extract::ws::Message>) {
+    pub fn register_session(
+        &self,
+        device_id: String,
+        name: String,
+        tx: tokio::sync::mpsc::Sender<axum::extract::ws::Message>,
+    ) {
         let mut inner = self.inner.lock().unwrap();
-        inner.active_sessions.insert(device_id.clone(), WsSession {
-            device_id,
-            name,
-            tx,
-        });
+        inner.active_sessions.insert(
+            device_id.clone(),
+            WsSession {
+                device_id,
+                name,
+                tx,
+            },
+        );
     }
 
     // Unregister active device session
@@ -157,17 +165,29 @@ impl AppState {
     }
 
     // Add in-flight request for correlation
-    pub fn register_request(&self, request_id: String, tx: oneshot::Sender<Result<serde_json::Value, String>>, timeout_duration: std::time::Duration) {
+    pub fn register_request(
+        &self,
+        request_id: String,
+        tx: oneshot::Sender<Result<serde_json::Value, String>>,
+        timeout_duration: std::time::Duration,
+    ) {
         let mut inner = self.inner.lock().unwrap();
         let deadline = Instant::now() + timeout_duration;
-        inner.pending_requests.insert(request_id, PendingRequest {
-            sender: tx,
-            deadline,
-        });
+        inner.pending_requests.insert(
+            request_id,
+            PendingRequest {
+                sender: tx,
+                deadline,
+            },
+        );
     }
 
     // Resolve an in-flight request when response arrives
-    pub fn complete_request(&self, request_id: &str, result: Result<serde_json::Value, String>) -> bool {
+    pub fn complete_request(
+        &self,
+        request_id: &str,
+        result: Result<serde_json::Value, String>,
+    ) -> bool {
         let mut inner = self.inner.lock().unwrap();
         if let Some(req) = inner.pending_requests.remove(request_id) {
             let _ = req.sender.send(result);
@@ -181,7 +201,7 @@ impl AppState {
     pub fn reap_expired_requests(&self) {
         let mut inner = self.inner.lock().unwrap();
         let now = Instant::now();
-        
+
         let mut expired_ids = Vec::new();
         for (id, req) in &inner.pending_requests {
             if req.deadline < now {

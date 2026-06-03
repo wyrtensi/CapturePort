@@ -1,8 +1,8 @@
-use serde_json::{json, Value};
-use tokio::time::timeout;
-use std::time::Duration;
 use crate::state::AppState;
 use crate::ws::envelope::Envelope;
+use serde_json::{json, Value};
+use std::time::Duration;
+use tokio::time::timeout;
 
 pub struct McpServer;
 
@@ -29,7 +29,7 @@ impl McpServer {
                         let is_notification = id.is_none() || id.unwrap().is_null();
 
                         let response = Self::handle_mcp_request(request, &state).await;
-                        
+
                         // JSON-RPC 2.0: No Response object should be returned for a Notification
                         if !is_notification {
                             println!("{}", serde_json::to_string(&response).unwrap_or_default());
@@ -57,7 +57,7 @@ impl McpServer {
     // Handles standard MCP JSON-RPC requests (e.g. initialize, tools/list, tools/call)
     async fn handle_mcp_request(req: Value, state: &AppState) -> Value {
         let id = req.get("id").cloned().unwrap_or(Value::Null);
-        
+
         // Structural validation for Invalid Request (-32600)
         if !req.is_object() || (req.get("method").is_none() && req.get("id").is_some()) {
             return json!({
@@ -71,7 +71,7 @@ impl McpServer {
         }
 
         let method = req.get("method").and_then(|m| m.as_str()).unwrap_or("");
-        
+
         match method {
             "initialize" => {
                 json!({
@@ -238,15 +238,22 @@ impl McpServer {
         }
     }
 
-    fn resolve_active_device(state: &AppState, device_param: Option<&str>) -> Result<String, String> {
+    fn resolve_active_device(
+        state: &AppState,
+        device_param: Option<&str>,
+    ) -> Result<String, String> {
         let inner = state.inner.lock().unwrap();
         if inner.active_sessions.is_empty() {
             return Err("No active mobile devices are online. Please open the CapturePort app on your phone.".to_string());
         }
 
-        let mut active_mcp_sessions: Vec<(&String, &crate::state::WsSession)> = inner.active_sessions.iter()
+        let mut active_mcp_sessions: Vec<(&String, &crate::state::WsSession)> = inner
+            .active_sessions
+            .iter()
             .filter(|(id, _)| {
-                inner.paired_devices.get(*id)
+                inner
+                    .paired_devices
+                    .get(*id)
                     .map(|d| d.exposed_to_mcp)
                     .unwrap_or(false)
             })
@@ -261,10 +268,10 @@ impl McpServer {
             let dev_a = inner.paired_devices.get(*id_a);
             let dev_b = inner.paired_devices.get(*id_b);
             match (dev_a, dev_b) {
-                (Some(a), Some(b)) => {
-                    b.pinned.cmp(&a.pinned)
-                        .then_with(|| b.last_seen_ms.cmp(&a.last_seen_ms))
-                }
+                (Some(a), Some(b)) => b
+                    .pinned
+                    .cmp(&a.pinned)
+                    .then_with(|| b.last_seen_ms.cmp(&a.last_seen_ms)),
                 _ => std::cmp::Ordering::Equal,
             }
         });
@@ -275,7 +282,10 @@ impl McpServer {
         };
 
         // Match exact UUID
-        if let Some((id, _)) = active_mcp_sessions.iter().find(|(id, _)| id.as_str() == param) {
+        if let Some((id, _)) = active_mcp_sessions
+            .iter()
+            .find(|(id, _)| id.as_str() == param)
+        {
             return Ok(id.to_string());
         }
 
@@ -286,10 +296,11 @@ impl McpServer {
 
         // Case-insensitive substring match (name or UUID)
         let query_lower = param.to_lowercase();
-        let matches: Vec<String> = active_mcp_sessions.iter()
+        let matches: Vec<String> = active_mcp_sessions
+            .iter()
             .filter(|(id, s)| {
-                s.name.to_lowercase().contains(&query_lower) ||
-                id.to_lowercase().contains(&query_lower)
+                s.name.to_lowercase().contains(&query_lower)
+                    || id.to_lowercase().contains(&query_lower)
             })
             .map(|(id, _)| id.to_string())
             .collect();
@@ -299,14 +310,17 @@ impl McpServer {
         } else if matches.len() > 1 {
             Err(format!("Ambiguous device query '{}' matched multiple devices. Please specify a more precise name or UUID.", param))
         } else {
-            Err(format!("No online, MCP-exposed device matches query '{}'.", param))
+            Err(format!(
+                "No online, MCP-exposed device matches query '{}'.",
+                param
+            ))
         }
     }
 
     async fn tool_list_devices(state: &AppState) -> Result<Value, String> {
         let inner = state.inner.lock().unwrap();
         let mut devices_list = Vec::new();
-        
+
         for (id, dev) in &inner.paired_devices {
             if dev.exposed_to_mcp {
                 let online = inner.active_sessions.contains_key(id);
@@ -337,7 +351,8 @@ impl McpServer {
         let tx = {
             let inner = state.inner.lock().unwrap();
             inner.active_sessions.get(&device_id).map(|s| s.tx.clone())
-        }.ok_or_else(|| "Failed to retrieve active socket channel".to_string())?;
+        }
+        .ok_or_else(|| "Failed to retrieve active socket channel".to_string())?;
 
         let (oneshot_tx, oneshot_rx) = tokio::sync::oneshot::channel::<Result<Value, String>>();
         let request_id = ulid::Ulid::new().to_string();
@@ -348,17 +363,24 @@ impl McpServer {
             request_id,
             "capture_photo".to_string(),
             json!({ "timeout_ms": 12000 }),
-            None
+            None,
         );
 
         let payload_str = serde_json::to_string(&req_env).unwrap();
-        if tx.send(axum::extract::ws::Message::Text(payload_str)).await.is_err() {
+        if tx
+            .send(axum::extract::ws::Message::Text(payload_str))
+            .await
+            .is_err()
+        {
             return Err("Failed to push capture command onto WebSocket channel".to_string());
         }
 
         match timeout(Duration::from_secs(12), oneshot_rx).await {
             Ok(Ok(Ok(result))) => {
-                let base64_jpeg = result.get("base64_data").and_then(|b| b.as_str()).unwrap_or("");
+                let base64_jpeg = result
+                    .get("base64_data")
+                    .and_then(|b| b.as_str())
+                    .unwrap_or("");
                 Ok(json!({
                     "content": [
                         {
@@ -371,7 +393,10 @@ impl McpServer {
             }
             Ok(Ok(Err(err))) => Err(err),
             Ok(Err(_)) => Err("Correlation channel dropped unexpectedly".to_string()),
-            Err(_) => Err("Camera capture timed out. The phone did not return the image in 12 seconds.".to_string())
+            Err(_) => Err(
+                "Camera capture timed out. The phone did not return the image in 12 seconds."
+                    .to_string(),
+            ),
         }
     }
 
@@ -382,7 +407,8 @@ impl McpServer {
         let tx = {
             let inner = state.inner.lock().unwrap();
             inner.active_sessions.get(&device_id).map(|s| s.tx.clone())
-        }.ok_or_else(|| "Failed to retrieve active socket channel".to_string())?;
+        }
+        .ok_or_else(|| "Failed to retrieve active socket channel".to_string())?;
 
         let (oneshot_tx, oneshot_rx) = tokio::sync::oneshot::channel::<Result<Value, String>>();
         let request_id = ulid::Ulid::new().to_string();
@@ -393,17 +419,24 @@ impl McpServer {
             request_id,
             "capture_screenshot".to_string(),
             json!({ "timeout_ms": 12000 }),
-            None
+            None,
         );
 
         let payload_str = serde_json::to_string(&req_env).unwrap();
-        if tx.send(axum::extract::ws::Message::Text(payload_str)).await.is_err() {
+        if tx
+            .send(axum::extract::ws::Message::Text(payload_str))
+            .await
+            .is_err()
+        {
             return Err("Failed to push capture command onto WebSocket channel".to_string());
         }
 
         match timeout(Duration::from_secs(12), oneshot_rx).await {
             Ok(Ok(Ok(result))) => {
-                let base64_jpeg = result.get("base64_data").and_then(|b| b.as_str()).unwrap_or("");
+                let base64_jpeg = result
+                    .get("base64_data")
+                    .and_then(|b| b.as_str())
+                    .unwrap_or("");
                 Ok(json!({
                     "content": [
                         {
@@ -416,42 +449,62 @@ impl McpServer {
             }
             Ok(Ok(Err(err))) => Err(err),
             Ok(Err(_)) => Err("Correlation channel dropped unexpectedly".to_string()),
-            Err(_) => Err("Camera capture timed out. The phone did not return the image in 12 seconds.".to_string())
+            Err(_) => Err(
+                "Camera capture timed out. The phone did not return the image in 12 seconds."
+                    .to_string(),
+            ),
         }
     }
 
     async fn tool_record_video(state: &AppState, args: &Value) -> Result<Value, String> {
         let device_param = args.get("device").and_then(|v| v.as_str());
         let device_id = Self::resolve_active_device(state, device_param)?;
-        let duration_seconds = args.get("duration_seconds").and_then(|v| v.as_i64()).unwrap_or(10);
+        let duration_seconds = args
+            .get("duration_seconds")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(10);
 
         let tx = {
             let inner = state.inner.lock().unwrap();
             inner.active_sessions.get(&device_id).map(|s| s.tx.clone())
-        }.ok_or_else(|| "Failed to retrieve active socket channel".to_string())?;
+        }
+        .ok_or_else(|| "Failed to retrieve active socket channel".to_string())?;
 
         let (oneshot_tx, oneshot_rx) = tokio::sync::oneshot::channel::<Result<Value, String>>();
         let request_id = ulid::Ulid::new().to_string();
 
-        state.register_request(request_id.clone(), oneshot_tx, Duration::from_secs((duration_seconds + 5) as u64));
+        state.register_request(
+            request_id.clone(),
+            oneshot_tx,
+            Duration::from_secs((duration_seconds + 5) as u64),
+        );
 
         let req_env = Envelope::new_request(
             request_id,
             "record_video".to_string(),
             json!({ "duration_seconds": duration_seconds }),
-            None
+            None,
         );
 
         let payload_str = serde_json::to_string(&req_env).unwrap();
-        if tx.send(axum::extract::ws::Message::Text(payload_str)).await.is_err() {
+        if tx
+            .send(axum::extract::ws::Message::Text(payload_str))
+            .await
+            .is_err()
+        {
             return Err("Failed to push record command onto WebSocket channel".to_string());
         }
 
-        match timeout(Duration::from_secs((duration_seconds + 8) as u64), oneshot_rx).await {
+        match timeout(
+            Duration::from_secs((duration_seconds + 8) as u64),
+            oneshot_rx,
+        )
+        .await
+        {
             Ok(Ok(Ok(result))) => Ok(result),
             Ok(Ok(Err(err))) => Err(err),
             Ok(Err(_)) => Err("Correlation channel dropped unexpectedly".to_string()),
-            Err(_) => Err("Video recording timed out.".to_string())
+            Err(_) => Err("Video recording timed out.".to_string()),
         }
     }
 
@@ -462,7 +515,8 @@ impl McpServer {
         let tx = {
             let inner = state.inner.lock().unwrap();
             inner.active_sessions.get(&device_id).map(|s| s.tx.clone())
-        }.ok_or_else(|| "Failed to retrieve active socket channel".to_string())?;
+        }
+        .ok_or_else(|| "Failed to retrieve active socket channel".to_string())?;
 
         let (oneshot_tx, oneshot_rx) = tokio::sync::oneshot::channel::<Result<Value, String>>();
         let request_id = ulid::Ulid::new().to_string();
@@ -473,11 +527,15 @@ impl McpServer {
             request_id,
             "get_device_clipboard".to_string(),
             Value::Null,
-            None
+            None,
         );
 
         let payload_str = serde_json::to_string(&req_env).unwrap();
-        if tx.send(axum::extract::ws::Message::Text(payload_str)).await.is_err() {
+        if tx
+            .send(axum::extract::ws::Message::Text(payload_str))
+            .await
+            .is_err()
+        {
             return Err("Failed to push clipboard command onto WebSocket channel".to_string());
         }
 
@@ -485,19 +543,23 @@ impl McpServer {
             Ok(Ok(Ok(result))) => Ok(result),
             Ok(Ok(Err(err))) => Err(err),
             Ok(Err(_)) => Err("Correlation channel dropped unexpectedly".to_string()),
-            Err(_) => Err("Clipboard retrieve timed out.".to_string())
+            Err(_) => Err("Clipboard retrieve timed out.".to_string()),
         }
     }
 
     async fn tool_set_device_clipboard(state: &AppState, args: &Value) -> Result<Value, String> {
         let device_param = args.get("device").and_then(|v| v.as_str());
         let device_id = Self::resolve_active_device(state, device_param)?;
-        let text = args.get("text").and_then(|v| v.as_str()).ok_or_else(|| "Missing required 'text' argument".to_string())?;
+        let text = args
+            .get("text")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "Missing required 'text' argument".to_string())?;
 
         let tx = {
             let inner = state.inner.lock().unwrap();
             inner.active_sessions.get(&device_id).map(|s| s.tx.clone())
-        }.ok_or_else(|| "Failed to retrieve active socket channel".to_string())?;
+        }
+        .ok_or_else(|| "Failed to retrieve active socket channel".to_string())?;
 
         let (oneshot_tx, oneshot_rx) = tokio::sync::oneshot::channel::<Result<Value, String>>();
         let request_id = ulid::Ulid::new().to_string();
@@ -508,11 +570,15 @@ impl McpServer {
             request_id,
             "set_device_clipboard".to_string(),
             json!({ "text": text }),
-            None
+            None,
         );
 
         let payload_str = serde_json::to_string(&req_env).unwrap();
-        if tx.send(axum::extract::ws::Message::Text(payload_str)).await.is_err() {
+        if tx
+            .send(axum::extract::ws::Message::Text(payload_str))
+            .await
+            .is_err()
+        {
             return Err("Failed to push clipboard command onto WebSocket channel".to_string());
         }
 
@@ -520,14 +586,16 @@ impl McpServer {
             Ok(Ok(Ok(result))) => Ok(result),
             Ok(Ok(Err(err))) => Err(err),
             Ok(Err(_)) => Err("Correlation channel dropped unexpectedly".to_string()),
-            Err(_) => Err("Clipboard set timed out.".to_string())
+            Err(_) => Err("Clipboard set timed out.".to_string()),
         }
     }
 
     async fn tool_snap_frame(state: &AppState) -> Result<Value, String> {
         let item = {
             let inner = state.inner.lock().unwrap();
-            inner.media_history.iter()
+            inner
+                .media_history
+                .iter()
                 .find(|m| m.kind == "photo" && m.base64_data.is_some())
                 .cloned()
         };

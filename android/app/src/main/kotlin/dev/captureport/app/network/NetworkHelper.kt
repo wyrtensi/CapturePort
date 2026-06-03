@@ -2,6 +2,7 @@ package dev.captureport.app.network
 
 import android.content.Context
 import android.net.ConnectivityManager
+import android.net.InetAddresses
 import android.net.LinkAddress
 import android.net.Network
 import android.net.NetworkCapabilities
@@ -53,7 +54,7 @@ object NetworkHelper {
                     .readTimeout(0, TimeUnit.MILLISECONDS) // Keep-alive socket
                     .writeTimeout(10, TimeUnit.SECONDS)
                     .socketFactory(DelegatingSocketFactory(context.applicationContext))
-                    .dns(DynamicDns(context.applicationContext))
+                    .dns(DynamicDns())
                     .build().also {
                         sharedOkHttpClient = it
                     }
@@ -212,24 +213,24 @@ object NetworkHelper {
         }
     }
 
-    class DynamicDns(private val context: Context) : Dns {
-        private val cm = context.applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
-
+    class DynamicDns : Dns {
         override fun lookup(hostname: String): List<InetAddress> {
-            val activeNetwork = cm?.activeNetwork
-            val capabilities = activeNetwork?.let { cm.getNetworkCapabilities(it) }
-            val isVpnActive = capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true
-            if (isVpnActive) {
-                val nonVpnNetwork = getNonVpnNetwork(context)
-                if (nonVpnNetwork != null) {
-                    try {
-                        return nonVpnNetwork.getAllByName(hostname).toList()
-                    } catch (e: Exception) {
-                        // fallback to system if lookup fails
-                    }
-                }
+            val literalAddress = parseLiteralAddress(hostname)
+            if (literalAddress != null) {
+                return listOf(literalAddress)
             }
+
             return Dns.SYSTEM.lookup(hostname)
+        }
+
+        private fun parseLiteralAddress(hostname: String): InetAddress? {
+            if (!InetAddresses.isNumericAddress(hostname)) return null
+
+            return try {
+                InetAddresses.parseNumericAddress(hostname)
+            } catch (e: Exception) {
+                null
+            }
         }
     }
 }

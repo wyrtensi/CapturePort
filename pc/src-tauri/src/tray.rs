@@ -1,9 +1,9 @@
+use anyhow::Result;
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::TrayIconBuilder,
     AppHandle, Emitter, Manager, Runtime, WebviewUrl, WebviewWindowBuilder,
 };
-use anyhow::Result;
 
 pub struct TrayManager;
 
@@ -22,11 +22,12 @@ impl TrayManager {
             };
 
             #[allow(unused_mut)]
-            let mut builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::App(window_url.into()))
-                .title("CapturePort")
-                .inner_size(980.0, 720.0)
-                .resizable(true)
-                .decorations(true);
+            let mut builder =
+                WebviewWindowBuilder::new(app, "main", WebviewUrl::App(window_url.into()))
+                    .title("CapturePort")
+                    .inner_size(980.0, 720.0)
+                    .resizable(true)
+                    .decorations(true);
 
             // On macOS, add elegant titlebar configuration if needed
             #[cfg(target_os = "macos")]
@@ -53,7 +54,7 @@ impl TrayManager {
         let pictures_dir = dirs::picture_dir()
             .unwrap_or_else(|| std::path::PathBuf::from("."))
             .join("CapturePort");
-        
+
         // Ensure directory exists before opening
         let _ = std::fs::create_dir_all(&pictures_dir);
 
@@ -61,7 +62,9 @@ impl TrayManager {
 
         #[cfg(target_os = "windows")]
         {
-            let _ = std::process::Command::new("explorer").arg(&path_str).spawn();
+            let _ = std::process::Command::new("explorer")
+                .arg(&path_str)
+                .spawn();
         }
         #[cfg(target_os = "macos")]
         {
@@ -69,15 +72,29 @@ impl TrayManager {
         }
         #[cfg(target_os = "linux")]
         {
-            let _ = std::process::Command::new("xdg-open").arg(&path_str).spawn();
+            let _ = std::process::Command::new("xdg-open")
+                .arg(&path_str)
+                .spawn();
         }
     }
 
     // Creates the system-tray context menu and binds event listeners
     pub fn create_tray<R: Runtime>(app: &AppHandle<R>) -> Result<()> {
-        let open_dashboard = MenuItem::with_id(app, "open_dashboard", "Open CapturePort", true, None::<&str>)?;
+        let open_dashboard = MenuItem::with_id(
+            app,
+            "open_dashboard",
+            "Open CapturePort",
+            true,
+            None::<&str>,
+        )?;
         let pair = MenuItem::with_id(app, "pair", "Pair new device...", true, None::<&str>)?;
-        let open_folder = MenuItem::with_id(app, "open_folder", "Open received folder", true, None::<&str>)?;
+        let open_folder = MenuItem::with_id(
+            app,
+            "open_folder",
+            "Open received folder",
+            true,
+            None::<&str>,
+        )?;
         let settings = MenuItem::with_id(app, "settings", "Settings...", true, None::<&str>)?;
         let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
 

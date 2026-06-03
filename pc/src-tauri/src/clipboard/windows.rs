@@ -1,8 +1,8 @@
+use crate::clipboard::ClipboardSink;
+use anyhow::{Context, Result};
 use std::ffi::OsStr;
 use std::os::windows::ffi::OsStrExt;
 use std::path::Path;
-use anyhow::{Result, Context};
-use crate::clipboard::ClipboardSink;
 
 pub struct WindowsSink;
 
@@ -21,13 +21,12 @@ impl Default for WindowsSink {
 #[cfg(target_os = "windows")]
 mod win32 {
     use super::*;
+    use windows_sys::Win32::Foundation::{GlobalFree, POINT};
     use windows_sys::Win32::System::DataExchange::{
-        OpenClipboard, EmptyClipboard, SetClipboardData, CloseClipboard,
+        CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData,
     };
     use windows_sys::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GHND};
     use windows_sys::Win32::System::Ole::CF_HDROP;
-    use windows_sys::Win32::Foundation::{POINT, GlobalFree};
-
 
     #[repr(C)]
     struct Dropfiles {
@@ -42,7 +41,7 @@ mod win32 {
         for path in paths {
             let abs_path = std::fs::canonicalize(path)?;
             let file_path_str = abs_path.to_string_lossy().to_string();
-            
+
             // Clean extended path prefix (e.g. \\?\ or \\?\UNC\)
             let clean_path = if let Some(stripped) = file_path_str.strip_prefix(r#"\\?\UNC\"#) {
                 format!(r#"\\{}"#, stripped)
@@ -51,7 +50,7 @@ mod win32 {
             } else {
                 file_path_str
             };
-            
+
             let os_str = OsStr::new(&clean_path);
             buffer.extend(os_str.encode_wide());
             buffer.push(0); // null separator
@@ -118,8 +117,8 @@ impl ClipboardSink for WindowsSink {
             .context("Failed to decode JPEG bytes for clipboard writing")?;
         let rgba = img.to_rgba8();
         let (w, h) = rgba.dimensions();
-        let mut ctx = arboard::Clipboard::new()
-            .context("Failed to open system clipboard via arboard")?;
+        let mut ctx =
+            arboard::Clipboard::new().context("Failed to open system clipboard via arboard")?;
         let img_data = arboard::ImageData {
             width: w as usize,
             height: h as usize,

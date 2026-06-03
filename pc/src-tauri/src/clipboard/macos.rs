@@ -1,9 +1,9 @@
-use std::path::Path;
-use anyhow::{Result, Context};
 use crate::clipboard::ClipboardSink;
+use anyhow::{Context, Result};
 use objc2::runtime::ProtocolObject;
 use objc2_app_kit::NSPasteboard;
 use objc2_foundation::{NSArray, NSString, NSURL};
+use std::path::Path;
 
 pub struct MacosSink;
 
@@ -21,8 +21,7 @@ impl Default for MacosSink {
 
 impl ClipboardSink for MacosSink {
     fn put_image(&self, jpeg_bytes: &[u8]) -> Result<()> {
-        let img = image::load_from_memory(jpeg_bytes)
-            .context("Failed to decode JPEG bytes")?;
+        let img = image::load_from_memory(jpeg_bytes).context("Failed to decode JPEG bytes")?;
         let rgba = img.to_rgba8();
         let (w, h) = rgba.dimensions();
         let mut ctx = arboard::Clipboard::new()?;

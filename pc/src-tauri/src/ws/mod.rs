@@ -1,33 +1,38 @@
 pub mod envelope;
 pub mod handler;
 
-use axum::{
-    routing::get,
-    Router,
-    extract::{ws::WebSocketUpgrade, State},
-    response::IntoResponse,
-};
-use std::net::SocketAddr;
 use crate::state::AppState;
 use crate::ws::handler::SocketHandler;
-use anyhow::{Result, Context};
+use anyhow::{Context, Result};
+use axum::{
+    extract::{ws::WebSocketUpgrade, State},
+    response::IntoResponse,
+    routing::get,
+    Router,
+};
+use std::net::SocketAddr;
 
 pub struct WsServer;
 
 impl WsServer {
     // Starts the axum web server running in the background on LAN
-    pub async fn start(state: AppState, app_handle: Option<tauri::AppHandle>, port: u16) -> Result<()> {
+    pub async fn start(
+        state: AppState,
+        app_handle: Option<tauri::AppHandle>,
+        port: u16,
+    ) -> Result<()> {
         let app = Router::new()
             .route("/ws", get(ws_handler))
             .with_state((state, app_handle));
 
         let addr = SocketAddr::from(([0, 0, 0, 0], port));
-        
-        let listener = tokio::net::TcpListener::bind(addr).await
+
+        let listener = tokio::net::TcpListener::bind(addr)
+            .await
             .context(format!("Failed to bind TcpListener on port {}", port))?;
-            
+
         tracing::info!("Axum WebSocket server listening on local network: {}", addr);
-        
+
         // Run axum server in a spawned Tokio background context
         tokio::spawn(async move {
             if let Err(e) = axum::serve(listener, app).await {

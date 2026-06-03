@@ -1,6 +1,6 @@
 [package]
 name = "captureport"
-version = "0.2.1"
+version = "0.2.2"
 description = "CapturePort PC Tray App & MCP Server"
 authors = ["wyrtensi"]
 edition = "2021"

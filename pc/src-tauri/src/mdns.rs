@@ -1,7 +1,7 @@
-use mdns_sd::{ServiceDaemon, ServiceInfo, IfKind};
-use std::collections::HashMap;
-use anyhow::{Result, Context};
 use crate::pairing::qr::QrGenerator;
+use anyhow::{Context, Result};
+use mdns_sd::{IfKind, ServiceDaemon, ServiceInfo};
+use std::collections::HashMap;
 
 pub struct MdnsAdvertiser {
     daemon: ServiceDaemon,
@@ -11,8 +11,7 @@ pub struct MdnsAdvertiser {
 
 impl MdnsAdvertiser {
     pub fn start(port: u16, tailscale_dns: Option<String>) -> Result<Self> {
-        let daemon = ServiceDaemon::new()
-            .context("Failed to initialize mDNS Service Daemon")?;
+        let daemon = ServiceDaemon::new().context("Failed to initialize mDNS Service Daemon")?;
 
         let hostname = hostname::get()
             .map(|h| h.to_string_lossy().into_owned())
@@ -24,7 +23,7 @@ impl MdnsAdvertiser {
             .collect::<String>();
 
         let service_type = "_captureport._tcp.local.";
-        
+
         let mut service_infos = Vec::new();
         let hosts = QrGenerator::get_pairing_hosts(tailscale_dns);
 

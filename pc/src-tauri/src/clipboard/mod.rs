@@ -1,5 +1,5 @@
-use std::path::Path;
 use anyhow::Result;
+use std::path::Path;
 
 pub trait ClipboardSink: Send + Sync {
     // Decodes JPEG bytes internally and copies RGBA to system clipboard

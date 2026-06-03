@@ -1,8 +1,8 @@
-use qrcodegen::{QrCode, QrCodeEcc};
-use ed25519_dalek::{SigningKey, Signer};
-use base64::prelude::*;
 use anyhow::Result;
+use base64::prelude::*;
+use ed25519_dalek::{Signer, SigningKey};
 use if_addrs::{get_if_addrs, IfAddr};
+use qrcodegen::{QrCode, QrCodeEcc};
 use std::net::{IpAddr, Ipv4Addr, UdpSocket};
 
 pub struct QrGenerator;
@@ -23,11 +23,9 @@ impl QrGenerator {
                     _ => continue,
                 };
 
-                if !crate::net::is_usable_ipv4(ip) {
-                    continue;
+                if let Some(priority) = Self::host_priority(ip, &iface) {
+                    ranked_hosts.push((priority, ip.to_string()));
                 }
-
-                ranked_hosts.push((Self::host_priority(ip, &iface), ip.to_string()));
             }
         }
 
@@ -41,7 +39,10 @@ impl QrGenerator {
 
         ranked_hosts.sort_by(|(left_score, left_host), (right_score, right_host)| {
             left_score.cmp(right_score).then_with(|| {
-                match (left_host.parse::<Ipv4Addr>(), right_host.parse::<Ipv4Addr>()) {
+                match (
+                    left_host.parse::<Ipv4Addr>(),
+                    right_host.parse::<Ipv4Addr>(),
+                ) {
                     (Ok(a), Ok(b)) => a.cmp(&b),
                     (Ok(_), Err(_)) => std::cmp::Ordering::Less,
                     (Err(_), Ok(_)) => std::cmp::Ordering::Greater,
@@ -77,7 +78,7 @@ impl QrGenerator {
         }
     }
 
-    fn is_virtual_interface_name(name: &str) -> bool {
+    fn is_host_only_interface_name(name: &str) -> bool {
         let lowered = name.to_ascii_lowercase();
         [
             "loopback",
@@ -90,31 +91,60 @@ impl QrGenerator {
             "vmware",
             "vmnet",
             "virtualbox",
-            "vpn",
-            "tun",
-            "tap",
-            "tailscale",
-            "zerotier",
             "bridge",
         ]
         .iter()
         .any(|needle| lowered.contains(needle))
     }
 
-    fn host_priority(ip: Ipv4Addr, iface: &if_addrs::Interface) -> u8 {
-        let name = iface.name.to_ascii_lowercase();
-        let is_virtual_or_vpn = iface.is_loopback()
-            || iface.is_p2p
-            || Self::is_virtual_interface_name(&iface.name)
-            || crate::net::VPN_NAME_NEEDLES.iter().any(|needle| name.contains(needle));
+    fn host_priority(ip: Ipv4Addr, iface: &if_addrs::Interface) -> Option<u8> {
+        Self::classify_pairing_host_candidate(ip, &iface.name, iface.is_loopback(), iface.is_p2p)
+    }
+
+    fn classify_pairing_host_candidate(
+        ip: Ipv4Addr,
+        iface_name: &str,
+        is_loopback: bool,
+        is_p2p: bool,
+    ) -> Option<u8> {
+        let name = iface_name.to_ascii_lowercase();
+        let is_host_only_or_virtual = is_loopback || Self::is_host_only_interface_name(iface_name);
         let looks_host_only = Self::looks_like_host_only_network(ip);
 
-        match (ip.is_private(), is_virtual_or_vpn || looks_host_only) {
-            (true, false) => 0,
-            (false, false) => 1,
-            (true, true) => 2,
-            (false, true) => 3,
+        if is_host_only_or_virtual || looks_host_only {
+            return None;
         }
+
+        let is_overlay_vpn = is_p2p
+            || crate::net::VPN_NAME_NEEDLES
+                .iter()
+                .any(|needle| name.contains(needle));
+
+        if !is_overlay_vpn && !crate::net::is_usable_ipv4(ip) {
+            return None;
+        }
+
+        if is_overlay_vpn {
+            if !Self::is_advertisable_overlay_ipv4(ip) {
+                return None;
+            }
+
+            return Some(3);
+        }
+
+        match ip.is_private() {
+            true => Some(0),
+            false => Some(2),
+        }
+    }
+
+    fn is_advertisable_overlay_ipv4(ip: Ipv4Addr) -> bool {
+        crate::net::is_usable_ipv4(ip) || Self::is_cgnat_ipv4(ip)
+    }
+
+    fn is_cgnat_ipv4(ip: Ipv4Addr) -> bool {
+        let [a, b, _, _] = ip.octets();
+        a == 100 && (64..=127).contains(&b)
     }
 
     fn looks_like_host_only_network(ip: Ipv4Addr) -> bool {
@@ -131,7 +161,10 @@ impl QrGenerator {
         tailscale_dns: Option<String>,
     ) -> Result<(String, String, String, [u8; 32])> {
         let hosts = Self::get_pairing_hosts(tailscale_dns);
-        let host = hosts.first().cloned().unwrap_or_else(|| "127.0.0.1".to_string());
+        let host = hosts
+            .first()
+            .cloned()
+            .unwrap_or_else(|| "127.0.0.1".to_string());
         let hosts_param = if hosts.is_empty() {
             host.clone()
         } else {
@@ -175,14 +208,20 @@ impl QrGenerator {
         let hash_bytes = hash.as_ref();
         let fingerprint = format!(
             "{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
-            hash_bytes[0], hash_bytes[1], hash_bytes[2], hash_bytes[3],
-            hash_bytes[4], hash_bytes[5], hash_bytes[6], hash_bytes[7]
+            hash_bytes[0],
+            hash_bytes[1],
+            hash_bytes[2],
+            hash_bytes[3],
+            hash_bytes[4],
+            hash_bytes[5],
+            hash_bytes[6],
+            hash_bytes[7]
         );
 
         // 6. Render URL to QR SVG
         let qr = QrCode::encode_text(&pair_url, QrCodeEcc::Medium)
             .map_err(|e| anyhow::anyhow!("QR encode error: {:?}", e))?;
-        
+
         let svg = Self::to_svg_string(&qr, 4);
         let base64_svg = BASE64_STANDARD.encode(svg.as_bytes());
         let qr_svg_data = format!("data:image/svg+xml;base64,{}", base64_svg);
@@ -229,13 +268,13 @@ impl QrGenerator {
         let size = qr.size();
         let total_size = size + border * 2;
         let mut parts = Vec::new();
-        
+
         // Background
         parts.push(format!(
             r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {0} {0}" width="100%" height="100%"><rect width="100%" height="100%" fill="#FFFFFF"/>"##,
             total_size
         ));
-        
+
         // QR Modules path builder
         let mut path = String::new();
         for y in 0..size {
@@ -245,12 +284,15 @@ impl QrGenerator {
                 }
             }
         }
-        
+
         if !path.is_empty() {
-            parts.push(format!(r##"<path d="{}" fill="#101114"/>"##, path.trim_end()));
+            parts.push(format!(
+                r##"<path d="{}" fill="#101114"/>"##,
+                path.trim_end()
+            ));
         }
         parts.push("</svg>".to_string());
-        
+
         parts.join("")
     }
 }
@@ -271,7 +313,10 @@ mod tests {
 
         hosts.sort_by(|(left_score, left_host), (right_score, right_host)| {
             left_score.cmp(right_score).then_with(|| {
-                match (left_host.parse::<Ipv4Addr>(), right_host.parse::<Ipv4Addr>()) {
+                match (
+                    left_host.parse::<Ipv4Addr>(),
+                    right_host.parse::<Ipv4Addr>(),
+                ) {
                     (Ok(a), Ok(b)) => a.cmp(&b),
                     (Ok(_), Err(_)) => std::cmp::Ordering::Less,
                     (Err(_), Ok(_)) => std::cmp::Ordering::Greater,
@@ -292,5 +337,62 @@ mod tests {
             ]
         );
     }
-}
 
+    #[test]
+    fn test_pairing_host_policy_keeps_overlay_vpns_after_lan() {
+        assert_eq!(
+            QrGenerator::classify_pairing_host_candidate(
+                Ipv4Addr::new(192, 168, 1, 42),
+                "Wi-Fi",
+                false,
+                false,
+            ),
+            Some(0)
+        );
+        assert_eq!(
+            QrGenerator::classify_pairing_host_candidate(
+                Ipv4Addr::new(10, 8, 0, 2),
+                "OpenVPN TAP Adapter",
+                false,
+                false,
+            ),
+            Some(3)
+        );
+        assert_eq!(
+            QrGenerator::classify_pairing_host_candidate(
+                Ipv4Addr::new(100, 64, 12, 34),
+                "wg0",
+                false,
+                false,
+            ),
+            Some(3)
+        );
+        assert_eq!(
+            QrGenerator::classify_pairing_host_candidate(
+                Ipv4Addr::new(100, 64, 12, 34),
+                "Wi-Fi",
+                false,
+                false,
+            ),
+            None
+        );
+        assert_eq!(
+            QrGenerator::classify_pairing_host_candidate(
+                Ipv4Addr::new(172, 17, 0, 1),
+                "DockerNAT",
+                false,
+                false,
+            ),
+            None
+        );
+        assert_eq!(
+            QrGenerator::classify_pairing_host_candidate(
+                Ipv4Addr::new(10, 0, 2, 15),
+                "Ethernet",
+                false,
+                true,
+            ),
+            Some(3)
+        );
+    }
+}

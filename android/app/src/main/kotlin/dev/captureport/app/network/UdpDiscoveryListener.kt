@@ -135,10 +135,17 @@ class UdpDiscoveryListener(
                     try {
                         val payload = JSONObject(message)
                         val idBase64 = payload.optString("id")
-                        val hosts = payload.optString("hosts")
+                        val payloadHosts = payload.optString("hosts")
                         val port = payload.optInt("port")
 
-                        if (idBase64.isNotEmpty() && hosts.isNotEmpty() && port > 0) {
+                        if (idBase64.isNotEmpty() && port > 0) {
+                            val hosts = DiscoveryHosts.mergePacketAndPayloadHosts(
+                                packet.address?.hostAddress,
+                                payloadHosts,
+                            )
+                            if (hosts.isEmpty()) {
+                                continue
+                            }
                             val decodedPk = Base64.decode(idBase64, Base64.URL_SAFE or Base64.NO_PADDING)
                             val devices = repository.pairedDevicesFlow.first()
                             for (device in devices) {

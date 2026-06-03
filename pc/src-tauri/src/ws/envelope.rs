@@ -1,6 +1,6 @@
-use serde::{Serialize, Deserialize};
-use std::convert::TryInto;
 use anyhow::{anyhow, Result};
+use serde::{Deserialize, Serialize};
+use std::convert::TryInto;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ErrorPayload {
@@ -11,7 +11,7 @@ pub struct ErrorPayload {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Envelope {
     pub v: u32,
-    pub t: String, // "req" | "resp" | "notify"
+    pub t: String,  // "req" | "resp" | "notify"
     pub id: String, // ULID correlation
     #[serde(skip_serializing_if = "Option::is_none")]
     pub method: Option<String>,
@@ -27,7 +27,12 @@ pub struct Envelope {
 }
 
 impl Envelope {
-    pub fn new_request(id: String, method: String, params: serde_json::Value, idem: Option<String>) -> Self {
+    pub fn new_request(
+        id: String,
+        method: String,
+        params: serde_json::Value,
+        idem: Option<String>,
+    ) -> Self {
         Self {
             v: 1,
             t: "req".to_string(),
@@ -124,7 +129,9 @@ impl BinaryFrame {
         let meta_size = u32::from_le_bytes(bytes[28..32].try_into()?) as usize;
 
         if bytes.len() < 32 + meta_size {
-            return Err(anyhow!("Binary frame truncated, meta_size exceeds packet length"));
+            return Err(anyhow!(
+                "Binary frame truncated, meta_size exceeds packet length"
+            ));
         }
 
         let meta = if meta_size > 0 {

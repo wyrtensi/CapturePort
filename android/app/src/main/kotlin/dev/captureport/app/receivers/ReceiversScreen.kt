@@ -37,6 +37,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -257,13 +260,13 @@ fun ReceiversScreen(
                     Spacer(modifier = Modifier.width(8.dp))
                     Icon(
                         imageVector = Icons.Default.Warning,
-                        contentDescription = "VPN Warning",
+                        contentDescription = "Network notice",
                         tint = Color(0xFFFF8A80),
                         modifier = Modifier.size(14.dp)
                     )
                     Spacer(modifier = Modifier.width(4.dp))
                     Text(
-                        text = "VPN Bypass Active",
+                        text = "Network assist active",
                         color = Color(0xFFFFB4AB),
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold
@@ -526,14 +529,19 @@ fun ReceiversScreen(
                     // Right-edge "pocket" fade — suggests the row continues off-screen
                     Box(
                         modifier = Modifier
-                            .align(Alignment.CenterEnd)
-                            .fillMaxHeight()
-                            .width(28.dp)
-                            .background(
-                                Brush.horizontalGradient(
-                                    colors = listOf(Color.Transparent, Color(0x99000000))
+                            .matchParentSize()
+                            .drawBehind {
+                                val fadeWidth = 28.dp.toPx()
+                                drawRect(
+                                    brush = Brush.horizontalGradient(
+                                        colors = listOf(Color.Transparent, Color(0x99000000)),
+                                        startX = size.width - fadeWidth,
+                                        endX = size.width
+                                    ),
+                                    topLeft = Offset(size.width - fadeWidth, 0f),
+                                    size = Size(fadeWidth, size.height)
                                 )
-                            )
+                            }
                     )
                 }
             }

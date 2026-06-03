@@ -325,7 +325,7 @@
 
               {#if vpnActive}
                 <div class="vpn-warning-text">
-                  <span>⚠️ VPN is active on PC (Wi-Fi pairing only)</span>
+                  <span>Network route changed. Local pairing may need Wi-Fi access.</span>
                 </div>
               {/if}
 
@@ -573,6 +573,7 @@
   .pairing-content {
     width: 100%;
     height: 100%;
+    max-height: calc(100vh - 48px);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -1223,6 +1224,142 @@
 
   .unpair-btn:active {
     transform: scale(0.97);
+  }
+
+  @media (max-width: 860px) {
+    .pairing-content {
+      align-items: stretch;
+      justify-content: flex-start;
+      padding: 16px;
+      max-height: calc(100vh - 48px);
+    }
+
+    .pairing-columns {
+      display: grid;
+      grid-template-columns: minmax(250px, 1.05fr) minmax(220px, 0.95fr);
+      gap: 16px;
+      max-width: none;
+      height: 100%;
+      align-items: stretch;
+    }
+
+    .pairing-panel,
+    .devices-panel {
+      min-width: 0;
+      max-width: none;
+      padding: 18px;
+      border-radius: 20px;
+      box-shadow:
+        0 4px 18px rgba(0, 0, 0, 0.28),
+        inset 0 1px 1px rgba(255, 255, 255, 0.03);
+      overflow-y: auto;
+      scrollbar-gutter: stable;
+    }
+
+    .pairing-panel:hover,
+    .devices-panel:hover {
+      transform: none;
+    }
+
+    .panel-header {
+      margin-bottom: 14px;
+    }
+
+    .panel-header h2 {
+      font-size: 18px;
+    }
+
+    .panel-header p {
+      font-size: 12px;
+      line-height: 1.35;
+    }
+
+    .qr-polaroid {
+      width: 168px;
+      padding: 12px;
+      margin-bottom: 14px;
+      border-radius: 16px;
+    }
+
+    .qr-photo-area {
+      border-radius: 10px;
+      padding: 6px;
+    }
+
+    .qr-polaroid-caption {
+      margin-top: 9px;
+    }
+
+    .connection-details-card {
+      padding: 14px;
+      gap: 10px;
+      margin-bottom: 14px;
+      border-radius: 16px;
+    }
+
+    .detail-label-title {
+      font-size: 9px;
+      letter-spacing: 1px;
+    }
+
+    .mono-text {
+      font-size: 11px;
+    }
+
+    .mono-text-blue {
+      font-size: 10.5px;
+      min-width: 0;
+      overflow-wrap: anywhere;
+    }
+
+    .ip-address-row {
+      gap: 8px;
+      padding: 7px 10px;
+    }
+
+    .vpn-warning-text,
+    .pairing-warning {
+      margin-bottom: 12px;
+      padding: 8px 12px;
+      font-size: 11px;
+      border-radius: 12px;
+    }
+
+    .pairing-footer {
+      padding-top: 8px;
+    }
+
+    .status-indicator {
+      padding: 7px 12px;
+    }
+
+    .status-text {
+      font-size: 11px;
+    }
+
+    .devices-list {
+      max-height: 360px;
+      gap: 10px;
+      padding-right: 2px;
+    }
+
+    .empty-devices {
+      padding: 28px 12px;
+      margin-top: 0;
+      border-radius: 16px;
+    }
+
+    .device-card {
+      padding: 14px;
+      gap: 12px;
+      border-radius: 14px;
+    }
+  }
+
+  @media (max-width: 700px) {
+    .pairing-columns {
+      grid-template-columns: 1fr;
+    }
   }
 
   /* Custom Switch Toggle styling */

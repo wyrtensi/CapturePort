@@ -51,8 +51,8 @@ class WsClient(
 
     // Connects to target paired PC receiver using sequential host list retry fallback
     fun connect(device: PairedDevice) {
-        activeDevice = device
         disconnect() // Cleanly shut down existing socket and cancel background loop
+        activeDevice = device
         
         val attemptId = connectionAttempt.incrementAndGet()
         scope.launch(Dispatchers.IO) {

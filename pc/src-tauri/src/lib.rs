@@ -4,17 +4,17 @@ pub mod pairing {
     pub mod keys;
     pub mod qr;
 }
-pub mod ws;
 pub mod clipboard;
 pub mod mcp;
 pub mod mdns;
 pub mod net;
+pub mod ws;
 
-use tauri::{Manager, Emitter};
+use crate::pairing::qr::QrGenerator;
+use crate::state::AppState;
 use serde_json::json;
 use std::sync::atomic::Ordering;
-use crate::state::AppState;
-use crate::pairing::qr::QrGenerator;
+use tauri::{Emitter, Manager};
 
 #[tauri::command]
 async fn get_pairing_info(state: tauri::State<'_, AppState>) -> Result<serde_json::Value, String> {
@@ -25,11 +25,12 @@ async fn get_pairing_info(state: tauri::State<'_, AppState>) -> Result<serde_jso
         &inner.pc_public_key,
         &inner.pc_private_key,
         settings.port,
-        tailscale_dns.clone()
-    ).map_err(|e| e.to_string())?;
-    
+        tailscale_dns.clone(),
+    )
+    .map_err(|e| e.to_string())?;
+
     inner.active_pairing_nonce = Some(nonce);
-    
+
     Ok(json!({
         "url": pair_url,
         "fingerprint": fingerprint,
@@ -50,7 +51,9 @@ pub struct PairedDeviceResponse {
 }
 
 #[tauri::command]
-async fn get_paired_devices(state: tauri::State<'_, AppState>) -> Result<Vec<PairedDeviceResponse>, String> {
+async fn get_paired_devices(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<PairedDeviceResponse>, String> {
     let inner = state.inner.lock().unwrap();
     let mut list = Vec::new();
     for (id, dev) in &inner.paired_devices {
@@ -110,8 +113,8 @@ async fn regenerate_pc_identity(
     app_handle: tauri::AppHandle,
 ) -> Result<serde_json::Value, String> {
     // 1. Generate new keys and write them to Keyring
-    let (pubkey, privkey) = crate::pairing::keys::KeystoreManager::regenerate_keys()
-        .map_err(|e| e.to_string())?;
+    let (pubkey, privkey) =
+        crate::pairing::keys::KeystoreManager::regenerate_keys().map_err(|e| e.to_string())?;
 
     // 2. Update state keys and clear paired devices
     {
@@ -129,12 +132,9 @@ async fn regenerate_pc_identity(
         let inner = state.inner.lock().unwrap();
         inner.tailscale_dns_name.clone()
     };
-    let (pair_url, fingerprint, qr_svg, nonce) = QrGenerator::generate_pairing_qr(
-        &pubkey,
-        &privkey,
-        settings.port,
-        tailscale_dns.clone()
-    ).map_err(|e| e.to_string())?;
+    let (pair_url, fingerprint, qr_svg, nonce) =
+        QrGenerator::generate_pairing_qr(&pubkey, &privkey, settings.port, tailscale_dns.clone())
+            .map_err(|e| e.to_string())?;
 
     {
         let mut inner = state.inner.lock().unwrap();
@@ -154,7 +154,9 @@ async fn regenerate_pc_identity(
 }
 
 #[tauri::command]
-async fn get_media_history(state: tauri::State<'_, AppState>) -> Result<Vec<crate::state::MediaItem>, String> {
+async fn get_media_history(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<crate::state::MediaItem>, String> {
     let inner = state.inner.lock().unwrap();
     Ok(inner.media_history.clone())
 }
@@ -163,15 +165,24 @@ async fn get_media_history(state: tauri::State<'_, AppState>) -> Result<Vec<crat
 async fn open_media_file(path: String) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
-        std::process::Command::new("explorer").arg(&path).spawn().map_err(|e| e.to_string())?;
+        std::process::Command::new("explorer")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| e.to_string())?;
     }
     #[cfg(target_os = "macos")]
     {
-        std::process::Command::new("open").arg(&path).spawn().map_err(|e| e.to_string())?;
+        std::process::Command::new("open")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| e.to_string())?;
     }
     #[cfg(target_os = "linux")]
     {
-        std::process::Command::new("xdg-open").arg(&path).spawn().map_err(|e| e.to_string())?;
+        std::process::Command::new("xdg-open")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| e.to_string())?;
     }
     Ok(())
 }
@@ -230,11 +241,11 @@ async fn get_settings() -> Result<serde_json::Value, String> {
             }
         }
     }
-    
+
     let hostname = hostname::get()
         .map(|h| h.to_string_lossy().into_owned())
         .unwrap_or_else(|_| "PC-Machine".to_string());
-    
+
     Ok(json!({
         "deviceName": hostname,
         "port": 7878,
@@ -258,7 +269,6 @@ async fn save_settings(
     tracing::info!("Settings saved successfully to disk: {:?}", new_settings);
     Ok(())
 }
-
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -286,7 +296,7 @@ pub fn run() {
                 tracing::error!("axum WebSocket server failed to start: {:?}", e);
                 return;
             }
-            
+
             // Block on standard stdio MCP JSON-RPC reader loop
             crate::mcp::McpServer::run_stdio_loop(state).await;
         });
@@ -327,7 +337,7 @@ pub fn run() {
                 let server_handle = app.handle().clone();
                 let settings = AppSettings::load();
                 let port = settings.port;
-                
+
                 // 1. Spawn periodic Tailscale MagicDNS probe (every 30 seconds)
                 let tailscale_weak = std::sync::Arc::downgrade(&tailscale_state.inner);
                 tauri::async_runtime::spawn(async move {
@@ -340,7 +350,9 @@ pub fn run() {
                         };
                         let dns_name = tokio::task::spawn_blocking(|| {
                             crate::pairing::qr::QrGenerator::tailscale_magic_name()
-                        }).await.unwrap_or(None);
+                        })
+                        .await
+                        .unwrap_or(None);
                         let mut inner = inner_arc.lock().unwrap();
                         inner.tailscale_dns_name = dns_name;
                     }
@@ -348,7 +360,9 @@ pub fn run() {
 
                 // 2. Spawn axum server (gui mode, pass AppHandle)
                 tauri::async_runtime::spawn(async move {
-                    if let Err(e) = crate::ws::WsServer::start(ws_state, Some(server_handle), port).await {
+                    if let Err(e) =
+                        crate::ws::WsServer::start(ws_state, Some(server_handle), port).await
+                    {
                         tracing::error!("axum WebSocket server failed to start: {:?}", e);
                     }
                 });
@@ -358,7 +372,9 @@ pub fn run() {
                 tauri::async_runtime::spawn(async move {
                     let initial_dns = tokio::task::spawn_blocking(|| {
                         crate::pairing::qr::QrGenerator::tailscale_magic_name()
-                    }).await.unwrap_or(None);
+                    })
+                    .await
+                    .unwrap_or(None);
                     match crate::mdns::MdnsAdvertiser::start(port, initial_dns) {
                         Ok(adv) => {
                             let mut inner = mdns_state_clone.inner.lock().unwrap();
@@ -407,7 +423,7 @@ pub fn run() {
                 if let Err(error) = crate::tray::TrayManager::create_tray(&app_handle) {
                     tracing::error!("Failed to create tray icon: {:?}", error);
                 }
-                
+
                 // Only run minimized if standard --minimized argument is passed
                 let args: Vec<String> = std::env::args().collect();
                 if args.contains(&"--minimized".to_string()) {

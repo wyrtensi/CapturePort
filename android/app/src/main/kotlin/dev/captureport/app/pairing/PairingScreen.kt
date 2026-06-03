@@ -319,7 +319,7 @@ fun PairingScreen(
             )
         }
 
-        // Animated VPN Warning Alert (Sliding below the Top Bar)
+        // Animated network warning alert (sliding below the top bar)
         AnimatedVisibility(
             visible = isVpnActive,
             enter = slideInVertically(initialOffsetY = { -it }) + fadeIn(),
@@ -345,7 +345,7 @@ fun PairingScreen(
                 )
                 Spacer(modifier = Modifier.width(12.dp))
                 Text(
-                    text = "Active VPN detected. Direct pairing might fail unless VPN bypass is active.",
+                    text = "Network route changed. Pairing may need local network access.",
                     color = Color(0xFFFDE8E8),
                     fontSize = 13.sp,
                     fontWeight = FontWeight.Medium
