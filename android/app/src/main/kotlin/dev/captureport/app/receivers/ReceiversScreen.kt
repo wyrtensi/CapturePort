@@ -865,6 +865,7 @@ fun ReceiversScreen(
                         label = { Text("Computer name") },
                         singleLine = true,
                         shape = RoundedCornerShape(12.dp),
+                        textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 16.sp),
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedTextColor = Color.White,
                             unfocusedTextColor = Color.White,
@@ -888,6 +889,7 @@ fun ReceiversScreen(
                                 Text("IP Address cannot be blank", color = MaterialTheme.colorScheme.error)
                             }
                         },
+                        textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 16.sp),
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedTextColor = Color.White,
                             unfocusedTextColor = Color.White,
@@ -911,6 +913,7 @@ fun ReceiversScreen(
                                 Text("Port must be a number between 1 and 65535", color = MaterialTheme.colorScheme.error)
                             }
                         },
+                        textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 16.sp),
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedTextColor = Color.White,
                             unfocusedTextColor = Color.White,
@@ -928,6 +931,7 @@ fun ReceiversScreen(
                         label = { Text("Internet host or DDNS") },
                         singleLine = true,
                         shape = RoundedCornerShape(12.dp),
+                        textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 16.sp),
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedTextColor = Color.White,
                             unfocusedTextColor = Color.White,
@@ -951,6 +955,7 @@ fun ReceiversScreen(
                                 Text("Internet port must be a number between 1 and 65535", color = MaterialTheme.colorScheme.error)
                             }
                         },
+                        textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 16.sp),
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedTextColor = Color.White,
                             unfocusedTextColor = Color.White,

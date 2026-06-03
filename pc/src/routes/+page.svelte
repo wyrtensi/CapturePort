@@ -1478,8 +1478,6 @@
       box-shadow:
         0 4px 18px rgba(0, 0, 0, 0.28),
         inset 0 1px 1px rgba(255, 255, 255, 0.03);
-      overflow-y: auto;
-      scrollbar-gutter: stable;
     }
 
     .pairing-panel:hover {
@@ -1500,7 +1498,6 @@
     }
 
     .qr-polaroid {
-      width: 168px;
       padding: 12px;
       margin-bottom: 14px;
       border-radius: 16px;
