@@ -6,6 +6,8 @@ import dev.captureport.app.network.WsClient
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 
+import dev.captureport.app.network.UdpDiscoveryListener
+
 enum class CameraCapturePolicy(val label: String) {
     ScreenOnly("Camera: screen only")
 }
@@ -18,6 +20,8 @@ class CapturePortApp : Application() {
         private set
         
     var wsClient: WsClient? = null
+    private var udpDiscoveryListener: UdpDiscoveryListener? = null
+
     @Volatile
     var cameraCapturePolicy: CameraCapturePolicy = CameraCapturePolicy.ScreenOnly
     @Volatile
@@ -34,6 +38,10 @@ class CapturePortApp : Application() {
         super.onCreate()
         instance = this
         pairedDevicesRepository = PairedDevicesRepository(this)
+
+        udpDiscoveryListener = UdpDiscoveryListener(this, pairedDevicesRepository, applicationScope).apply {
+            start()
+        }
     }
 
     companion object {

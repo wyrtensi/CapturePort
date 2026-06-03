@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.0] - 2026-06-03
+### Added
+- VPN-Safe Routing and Multi-Path Discovery implementation across PC and Android apps.
+- Platform-specific active VPN default route detection (Windows `GetBestInterface`, Linux `/proc/net/route`, macOS `route -n get default`).
+- Conditional UI warning indicators for active VPN states in both Tauri/Svelte and Android Jetpack Compose.
+- Dynamic interface filtering on PC to disable/enable mDNS advertisement on active VPN virtual adapters automatically.
+- Automatic device discovery via periodic UDP broadcast beacons on port 5354 (PC Emitter & Android `UdpDiscoveryListener`).
+- Background probing of Tailscale MagicDNS status command to retrieve priority pairing domain names.
+- Manual IP and port input dialog with Compose form validation and fallback connection updates.
+- Robust singleton `OkHttpClient` sharing with `DelegatingSocketFactory` and network-specific fallback resolver to bypass VPN routing.
+
 ## [0.1.7] - 2026-06-02
 ### Fixed
 - Android pairing no longer crashes with `Failed to generate a valid Ed25519 key pair in AndroidKeyStore`. The keypair self-test no longer rejects a freshly generated AndroidKeyStore Ed25519 entry when the default JCE provider (`KeyFactory`/`Signature` for `Ed25519`) is missing or misbehaving on certain Android 13/14 OEM builds. We now only do a structural check (algorithm + 32-byte raw public key) and let the PC verify the real challenge signature via `ed25519-dalek`.

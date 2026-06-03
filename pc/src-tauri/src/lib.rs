@@ -8,6 +8,7 @@ pub mod ws;
 pub mod clipboard;
 pub mod mcp;
 pub mod mdns;
+pub mod net;
 
 use tauri::{Manager, Emitter};
 use serde_json::json;
@@ -19,10 +20,12 @@ use crate::pairing::qr::QrGenerator;
 async fn get_pairing_info(state: tauri::State<'_, AppState>) -> Result<serde_json::Value, String> {
     let mut inner = state.inner.lock().unwrap();
     let settings = AppSettings::load();
+    let tailscale_dns = inner.tailscale_dns_name.clone();
     let (pair_url, fingerprint, qr_svg, nonce) = QrGenerator::generate_pairing_qr(
         &inner.pc_public_key,
         &inner.pc_private_key,
-        settings.port
+        settings.port,
+        tailscale_dns.clone()
     ).map_err(|e| e.to_string())?;
     
     inner.active_pairing_nonce = Some(nonce);
@@ -30,7 +33,9 @@ async fn get_pairing_info(state: tauri::State<'_, AppState>) -> Result<serde_jso
     Ok(json!({
         "url": pair_url,
         "fingerprint": fingerprint,
-        "qr_svg": qr_svg
+        "qr_svg": qr_svg,
+        "vpn_active": crate::net::is_vpn_default_route(),
+        "hosts": QrGenerator::get_pairing_hosts(tailscale_dns)
     }))
 }
 
@@ -120,10 +125,15 @@ async fn regenerate_pc_identity(
 
     // 3. Generate new pairing info
     let settings = AppSettings::load();
+    let tailscale_dns = {
+        let inner = state.inner.lock().unwrap();
+        inner.tailscale_dns_name.clone()
+    };
     let (pair_url, fingerprint, qr_svg, nonce) = QrGenerator::generate_pairing_qr(
         &pubkey,
         &privkey,
-        settings.port
+        settings.port,
+        tailscale_dns.clone()
     ).map_err(|e| e.to_string())?;
 
     {
@@ -137,7 +147,9 @@ async fn regenerate_pc_identity(
     Ok(json!({
         "url": pair_url,
         "fingerprint": fingerprint,
-        "qr_svg": qr_svg
+        "qr_svg": qr_svg,
+        "vpn_active": crate::net::is_vpn_default_route(),
+        "hosts": QrGenerator::get_pairing_hosts(tailscale_dns)
     }))
 }
 
@@ -290,6 +302,8 @@ pub fn run() {
         let ws_state = state.clone();
         let mdns_state = state.clone();
         let reaper_state = state.clone();
+        let tailscale_state = state.clone();
+        let broadcast_state = state.clone();
 
         tauri::Builder::default()
             .manage(state)
@@ -314,18 +328,40 @@ pub fn run() {
                 let settings = AppSettings::load();
                 let port = settings.port;
                 
-                // Spawn axum server (gui mode, pass AppHandle)
+                // 1. Spawn periodic Tailscale MagicDNS probe (every 30 seconds)
+                let tailscale_weak = std::sync::Arc::downgrade(&tailscale_state.inner);
+                tauri::async_runtime::spawn(async move {
+                    let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(30));
+                    loop {
+                        interval.tick().await;
+                        let inner_arc = match tailscale_weak.upgrade() {
+                            Some(arc) => arc,
+                            None => break,
+                        };
+                        let dns_name = tokio::task::spawn_blocking(|| {
+                            crate::pairing::qr::QrGenerator::tailscale_magic_name()
+                        }).await.unwrap_or(None);
+                        let mut inner = inner_arc.lock().unwrap();
+                        inner.tailscale_dns_name = dns_name;
+                    }
+                });
+
+                // 2. Spawn axum server (gui mode, pass AppHandle)
                 tauri::async_runtime::spawn(async move {
                     if let Err(e) = crate::ws::WsServer::start(ws_state, Some(server_handle), port).await {
                         tracing::error!("axum WebSocket server failed to start: {:?}", e);
                     }
                 });
 
-                // Spawn mDNS advertiser and store inside AppState to keep it alive
+                // 3. Spawn mDNS advertiser and store inside AppState to keep it alive
+                let mdns_state_clone = mdns_state.clone();
                 tauri::async_runtime::spawn(async move {
-                    match crate::mdns::MdnsAdvertiser::start(port) {
+                    let initial_dns = tokio::task::spawn_blocking(|| {
+                        crate::pairing::qr::QrGenerator::tailscale_magic_name()
+                    }).await.unwrap_or(None);
+                    match crate::mdns::MdnsAdvertiser::start(port, initial_dns) {
                         Ok(adv) => {
-                            let mut inner = mdns_state.inner.lock().unwrap();
+                            let mut inner = mdns_state_clone.inner.lock().unwrap();
                             inner.mdns_advertiser = Some(adv);
                         }
                         Err(e) => {
@@ -334,12 +370,36 @@ pub fn run() {
                     }
                 });
 
-                // Spawn periodic correlation map reaper task (every 5 seconds)
+                // 5. Start UDP Broadcast Emitter
+                let pc_public_key = {
+                    let inner = broadcast_state.inner.lock().unwrap();
+                    inner.pc_public_key
+                };
+                crate::net::start_udp_broadcast(port, pc_public_key, broadcast_state);
+
+                // 6. Spawn periodic correlation map reaper task (every 5 seconds)
+                let reaper_weak = std::sync::Arc::downgrade(&reaper_state.inner);
                 tauri::async_runtime::spawn(async move {
                     let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(5));
                     loop {
                         interval.tick().await;
-                        reaper_state.reap_expired_requests();
+                        let inner_arc = match reaper_weak.upgrade() {
+                            Some(arc) => arc,
+                            None => break,
+                        };
+                        let mut inner = inner_arc.lock().unwrap();
+                        let now = std::time::Instant::now();
+                        let mut expired_ids = Vec::new();
+                        for (id, req) in &inner.pending_requests {
+                            if req.deadline < now {
+                                expired_ids.push(id.clone());
+                            }
+                        }
+                        for id in expired_ids {
+                            if let Some(req) = inner.pending_requests.remove(&id) {
+                                let _ = req.sender.send(Err(format!("Request {} timed out", id)));
+                            }
+                        }
                     }
                 });
 

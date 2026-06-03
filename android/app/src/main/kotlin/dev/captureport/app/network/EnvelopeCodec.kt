@@ -28,12 +28,12 @@ object EnvelopeCodec {
             v = obj.optInt("v", 1),
             t = obj.getString("t"),
             id = obj.getString("id"),
-            method = obj.optString("method", null as String?),
+            method = if (obj.isNull("method")) null else obj.optString("method"),
             params = obj.optJSONObject("params"),
             result = obj.optJSONObject("result"),
             error = obj.optJSONObject("error"),
             ts = obj.optLong("ts", System.currentTimeMillis()),
-            idem = obj.optString("idem", null as String?)
+            idem = if (obj.isNull("idem")) null else obj.optString("idem")
         )
     }
 

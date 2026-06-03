@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "CapturePort",
-  "version": "0.1.9",
-  "identifier": "com.wyrtensi.pc",
+  "version": "0.2.0",
+  "identifier": "com.wyrtensi.captureport",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",

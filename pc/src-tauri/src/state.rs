@@ -76,6 +76,9 @@ pub struct AppStateInner {
 
     // Keep mDNS advertiser instance alive
     pub mdns_advertiser: Option<crate::mdns::MdnsAdvertiser>,
+
+    // Tailscale MagicDNS name cached
+    pub tailscale_dns_name: Option<String>,
 }
 
 #[derive(Clone)]
@@ -96,6 +99,7 @@ impl AppState {
                 media_history: Vec::new(),
                 active_pairing_nonce: None,
                 mdns_advertiser: None,
+                tailscale_dns_name: None,
             })),
             close_to_tray: Arc::new(AtomicBool::new(close_to_tray)),
         };
@@ -125,9 +129,12 @@ impl AppState {
 
     pub fn save_paired_devices(&self) {
         let path = Self::get_storage_path();
-        let inner = self.inner.lock().unwrap();
-        if let Ok(content) = serde_json::to_string_pretty(&inner.paired_devices) {
-            if let Err(e) = fs::write(&path, content) {
+        let content = {
+            let inner = self.inner.lock().unwrap();
+            serde_json::to_string_pretty(&inner.paired_devices).ok()
+        };
+        if let Some(c) = content {
+            if let Err(e) = fs::write(&path, c) {
                 tracing::error!("Failed to save paired devices to disk: {:?}", e);
             }
         }

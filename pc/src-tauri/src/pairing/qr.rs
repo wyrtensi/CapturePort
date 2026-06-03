@@ -9,25 +9,25 @@ pub struct QrGenerator;
 
 impl QrGenerator {
     // Utility to get the PC's preferred LAN IP for mobile pairing.
-    pub fn get_local_ip() -> Option<String> {
-        Self::get_pairing_hosts().into_iter().next()
+    pub fn get_local_ip(tailscale_dns: Option<String>) -> Option<String> {
+        Self::get_pairing_hosts(tailscale_dns).into_iter().next()
     }
 
-    pub fn get_pairing_hosts() -> Vec<String> {
+    pub fn get_pairing_hosts(tailscale_dns: Option<String>) -> Vec<String> {
         let mut ranked_hosts: Vec<(u8, String)> = Vec::new();
 
         if let Ok(ifaces) = get_if_addrs() {
             for iface in ifaces {
-                let ip = match iface.addr {
+                let ip = match &iface.addr {
                     IfAddr::V4(v4) => v4.ip,
                     _ => continue,
                 };
 
-                if !Self::is_usable_ipv4(ip) {
+                if !crate::net::is_usable_ipv4(ip) {
                     continue;
                 }
 
-                ranked_hosts.push((Self::host_priority(ip, &iface.name), ip.to_string()));
+                ranked_hosts.push((Self::host_priority(ip, &iface), ip.to_string()));
             }
         }
 
@@ -35,8 +35,19 @@ impl QrGenerator {
             ranked_hosts.push((0, routed_ip));
         }
 
+        if let Some(dns) = tailscale_dns {
+            ranked_hosts.push((1, dns));
+        }
+
         ranked_hosts.sort_by(|(left_score, left_host), (right_score, right_host)| {
-            left_score.cmp(right_score).then_with(|| left_host.cmp(right_host))
+            left_score.cmp(right_score).then_with(|| {
+                match (left_host.parse::<Ipv4Addr>(), right_host.parse::<Ipv4Addr>()) {
+                    (Ok(a), Ok(b)) => a.cmp(&b),
+                    (Ok(_), Err(_)) => std::cmp::Ordering::Less,
+                    (Err(_), Ok(_)) => std::cmp::Ordering::Greater,
+                    (Err(_), Err(_)) => left_host.cmp(right_host),
+                }
+            })
         });
 
         let mut hosts = Vec::new();
@@ -49,35 +60,21 @@ impl QrGenerator {
         hosts
     }
 
+    // Skip when a VPN tunnel owns the default route; the kernel would otherwise
+    // hand us the TUN address as a "LAN" candidate, which the phone cannot reach.
+    // CGNAT range 100.64.0.0/10 is reserved for this kind of address but is not
+    // a routable LAN destination.
     fn legacy_routed_ip() -> Option<String> {
+        if crate::net::is_vpn_default_route() {
+            tracing::info!("Default route is a VPN tunnel; skipping legacy_routed_ip()");
+            return None;
+        }
         let socket = UdpSocket::bind("0.0.0.0:0").ok()?;
         socket.connect("8.8.8.8:80").ok()?;
         match socket.local_addr().ok()?.ip() {
-            IpAddr::V4(ip) if Self::is_usable_ipv4(ip) => Some(ip.to_string()),
+            IpAddr::V4(ip) if crate::net::is_usable_ipv4(ip) => Some(ip.to_string()),
             _ => None,
         }
-    }
-
-    fn is_usable_ipv4(ip: Ipv4Addr) -> bool {
-        let [a, b, c, _] = ip.octets();
-
-        if ip.is_unspecified() || ip.is_loopback() || ip.is_link_local() || ip.is_broadcast() || ip.is_multicast() {
-            return false;
-        }
-
-        if a == 100 && (64..=127).contains(&b) {
-            return false;
-        }
-
-        if a == 198 && (b == 18 || b == 19) {
-            return false;
-        }
-
-        if (a, b, c) == (192, 0, 2) || (a, b, c) == (198, 51, 100) || (a, b, c) == (203, 0, 113) {
-            return false;
-        }
-
-        true
     }
 
     fn is_virtual_interface_name(name: &str) -> bool {
@@ -104,11 +101,15 @@ impl QrGenerator {
         .any(|needle| lowered.contains(needle))
     }
 
-    fn host_priority(ip: Ipv4Addr, interface_name: &str) -> u8 {
-        let is_virtual = Self::is_virtual_interface_name(interface_name);
+    fn host_priority(ip: Ipv4Addr, iface: &if_addrs::Interface) -> u8 {
+        let name = iface.name.to_ascii_lowercase();
+        let is_virtual_or_vpn = iface.is_loopback()
+            || iface.is_p2p
+            || Self::is_virtual_interface_name(&iface.name)
+            || crate::net::VPN_NAME_NEEDLES.iter().any(|needle| name.contains(needle));
         let looks_host_only = Self::looks_like_host_only_network(ip);
 
-        match (ip.is_private(), is_virtual || looks_host_only) {
+        match (ip.is_private(), is_virtual_or_vpn || looks_host_only) {
             (true, false) => 0,
             (false, false) => 1,
             (true, true) => 2,
@@ -127,8 +128,9 @@ impl QrGenerator {
         pubkey: &[u8; 32],
         privkey: &[u8; 32],
         port: u16,
+        tailscale_dns: Option<String>,
     ) -> Result<(String, String, String, [u8; 32])> {
-        let hosts = Self::get_pairing_hosts();
+        let hosts = Self::get_pairing_hosts(tailscale_dns);
         let host = hosts.first().cloned().unwrap_or_else(|| "127.0.0.1".to_string());
         let hosts_param = if hosts.is_empty() {
             host.clone()
@@ -188,6 +190,40 @@ impl QrGenerator {
         Ok((pair_url, fingerprint, qr_svg_data, nonce))
     }
 
+    pub fn tailscale_magic_name() -> Option<String> {
+        let out = if cfg!(target_os = "windows") {
+            // First try command on PATH
+            let run_path = std::process::Command::new("tailscale")
+                .args(["status", "--json"])
+                .output();
+            match run_path {
+                Ok(o) if o.status.success() => Some(o),
+                _ => {
+                    // Fallback to default installer path
+                    let path = "C:\\Program Files\\Tailscale\\tailscale.exe";
+                    std::process::Command::new(path)
+                        .args(["status", "--json"])
+                        .output()
+                        .ok()
+                }
+            }
+        } else {
+            std::process::Command::new("tailscale")
+                .args(["status", "--json"])
+                .output()
+                .ok()
+        }?;
+
+        if !out.status.success() {
+            return None;
+        }
+        let v: serde_json::Value = serde_json::from_slice(&out.stdout).ok()?;
+        v.get("Self")?
+            .get("DNSName")?
+            .as_str()
+            .map(|s| s.trim_end_matches('.').to_string())
+    }
+
     // Encodes QR Code modules into a compact vector SVG string
     fn to_svg_string(qr: &QrCode, border: i32) -> String {
         let size = qr.size();
@@ -218,3 +254,43 @@ impl QrGenerator {
         parts.join("")
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_pairing_hosts_sorting() {
+        let mut hosts = vec![
+            (0, "my-machine.tailscale.net".to_string()),
+            (0, "192.168.1.100".to_string()),
+            (0, "192.168.1.2".to_string()),
+            (0, "10.0.0.1".to_string()),
+            (0, "abc.example.com".to_string()),
+        ];
+
+        hosts.sort_by(|(left_score, left_host), (right_score, right_host)| {
+            left_score.cmp(right_score).then_with(|| {
+                match (left_host.parse::<Ipv4Addr>(), right_host.parse::<Ipv4Addr>()) {
+                    (Ok(a), Ok(b)) => a.cmp(&b),
+                    (Ok(_), Err(_)) => std::cmp::Ordering::Less,
+                    (Err(_), Ok(_)) => std::cmp::Ordering::Greater,
+                    (Err(_), Err(_)) => left_host.cmp(right_host),
+                }
+            })
+        });
+
+        let sorted_names: Vec<String> = hosts.into_iter().map(|(_, name)| name).collect();
+        assert_eq!(
+            sorted_names,
+            vec![
+                "10.0.0.1".to_string(),
+                "192.168.1.2".to_string(),
+                "192.168.1.100".to_string(),
+                "abc.example.com".to_string(),
+                "my-machine.tailscale.net".to_string(),
+            ]
+        );
+    }
+}
+

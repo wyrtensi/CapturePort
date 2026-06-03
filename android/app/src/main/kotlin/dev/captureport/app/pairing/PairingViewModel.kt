@@ -1,7 +1,11 @@
 package dev.captureport.app.pairing
 
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.os.Build
 import android.util.Base64
+import dev.captureport.app.network.NetworkHelper
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -50,10 +54,10 @@ class PairingViewModel(
     private val _uiState = MutableStateFlow<PairingState>(PairingState.Idle)
     val uiState: StateFlow<PairingState> = _uiState
 
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(2, TimeUnit.SECONDS)
-        .readTimeout(10, TimeUnit.SECONDS)
-        .build()
+    private val okHttpClient: OkHttpClient by lazy {
+        val context = dev.captureport.app.CapturePortApp.instance
+        NetworkHelper.getSharedClient(context)
+    }
 
     private var pairingSocket: WebSocket? = null
     private val pairingAttemptCounter = AtomicLong(0)
@@ -359,7 +363,7 @@ class PairingViewModel(
             }
         }
 
-        pairingSocket = client.newWebSocket(socketRequest, listener)
+        pairingSocket = okHttpClient.newWebSocket(socketRequest, listener)
     }
 
     override fun onCleared() {

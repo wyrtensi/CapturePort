@@ -468,6 +468,40 @@ dependencies = [
 ]
 
 [[package]]
+name = "captureport"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "arboard",
+ "axum",
+ "base64 0.22.1",
+ "ed25519-dalek",
+ "futures-util",
+ "hostname",
+ "if-addrs",
+ "image",
+ "keyring",
+ "mdns-sd",
+ "objc2",
+ "objc2-app-kit",
+ "objc2-foundation",
+ "qrcodegen",
+ "rand 0.8.6",
+ "ring",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-opener",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "ulid",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "cargo-platform"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2745,40 +2779,6 @@ name = "pathdiff"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "df94ce210e5bc13cb6651479fa48d14f601d9858cfe0467f43ae157023b938d3"
-
-[[package]]
-name = "pc"
-version = "0.1.8"
-dependencies = [
- "anyhow",
- "arboard",
- "axum",
- "base64 0.22.1",
- "ed25519-dalek",
- "futures-util",
- "hostname",
- "if-addrs",
- "image",
- "keyring",
- "mdns-sd",
- "objc2",
- "objc2-app-kit",
- "objc2-foundation",
- "qrcodegen",
- "rand 0.8.6",
- "ring",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-opener",
- "thiserror 1.0.69",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "ulid",
- "windows-sys 0.61.2",
-]
 
 [[package]]
 name = "percent-encoding"

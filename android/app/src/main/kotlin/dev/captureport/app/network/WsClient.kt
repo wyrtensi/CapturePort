@@ -2,6 +2,8 @@ package dev.captureport.app.network
 
 import android.content.Context
 import android.content.Intent
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.Base64
@@ -33,12 +35,9 @@ class WsClient(
         onCaptureRejected: (String) -> Unit
     ) -> Unit
 ) {
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(3, TimeUnit.SECONDS)
-        .pingInterval(10, TimeUnit.SECONDS) // Keep VPN / Wi-Fi connections alive
-        .readTimeout(0, TimeUnit.MILLISECONDS) // Keep-alive socket
-        .writeTimeout(10, TimeUnit.SECONDS)
-        .build()
+    private val okHttpClient: OkHttpClient by lazy {
+        NetworkHelper.getSharedClient(context)
+    }
 
     private var webSocket: WebSocket? = null
     private var reconnectJob: Job? = null
@@ -136,7 +135,7 @@ class WsClient(
                             val request = Request.Builder()
                                 .url("ws://$host:${device.port}/ws")
                                 .build()
-                            val currentWs = client.newWebSocket(request, listener)
+                            val currentWs = okHttpClient.newWebSocket(request, listener)
                             
                             if (connectionAttempt.get() == attemptId) {
                                 webSocket = currentWs

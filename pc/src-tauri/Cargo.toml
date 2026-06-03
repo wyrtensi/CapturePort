@@ -1,12 +1,12 @@
 [package]
-name = "pc"
-version = "0.1.9"
+name = "captureport"
+version = "0.2.0"
 description = "CapturePort PC Tray App & MCP Server"
 authors = ["wyrtensi"]
 edition = "2021"
 
 [lib]
-name = "pc_lib"
+name = "captureport_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
@@ -51,4 +51,4 @@ objc2-app-kit = { version = "0.3", features = ["NSPasteboard"] }
 objc2-foundation = { version = "0.3", features = ["NSString", "NSURL", "NSArray"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_System_DataExchange", "Win32_System_Memory", "Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_System_Ole"] }
+windows-sys = { version = "0.61", features = ["Win32_System_DataExchange", "Win32_System_Memory", "Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_System_Ole", "Win32_Networking_WinSock", "Win32_NetworkManagement_IpHelper"] }
