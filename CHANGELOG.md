@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.3] - 2026-06-03
+### Changed
+- Refactored capture port rendering pipeline.
+- Replaced VPN-specific logic with direct local/internet endpoint configurations.
+- Fixed Clippy warning where `from_str` should implement `std::str::FromStr`.
+
 ## [0.2.0] - 2026-06-03
 ### Added
 - Explicit local and internet endpoint modes for pairing and receiver connection fallback.
