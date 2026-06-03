@@ -428,6 +428,7 @@ impl SocketHandler {
                                 let mut device_info = DeviceInfo {
                                     id: device_id.clone(),
                                     name: pair.device_name.clone(),
+                                    alias: "".to_string(),
                                     os: pair.os.clone(),
                                     host: "".to_string(), // Filled in on broadcast
                                     port: 0,
@@ -448,6 +449,7 @@ impl SocketHandler {
                                     {
                                         device_info.pinned = existing_dev.pinned;
                                         device_info.exposed_to_mcp = existing_dev.exposed_to_mcp;
+                                        device_info.alias = existing_dev.alias.clone();
                                     }
                                     inner.paired_devices.insert(device_id.clone(), device_info);
                                 }

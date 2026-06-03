@@ -12,6 +12,11 @@ message PairedDevice {
   bytes  public_key   = 7;  // Stored natively as raw bytes
   int64  last_seen_ms = 8;
   bool   pinned       = 9;
+  string local_hosts  = 10;
+  int32  local_port   = 11;
+  string internet_host = 12;
+  int32  internet_port = 13;
+  string alias        = 14;
 }
 
 message PairedDevices {

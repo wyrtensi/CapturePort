@@ -4,14 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [0.2.0] - 2026-06-03
 ### Added
-- VPN-Safe Routing and Multi-Path Discovery implementation across PC and Android apps.
-- Platform-specific active VPN default route detection (Windows `GetBestInterface`, Linux `/proc/net/route`, macOS `route -n get default`).
-- Conditional UI warning indicators for active VPN states in both Tauri/Svelte and Android Jetpack Compose.
-- Dynamic interface filtering on PC to disable/enable mDNS advertisement on active VPN virtual adapters automatically.
+- Explicit local and internet endpoint modes for pairing and receiver connection fallback.
+- PC settings for advertised local host, external host/DDNS, external port, and best-effort firewall setup.
+- Android receiver cards can store separate local and internet endpoints without losing manual aliases.
 - Automatic device discovery via periodic UDP broadcast beacons on port 5354 (PC Emitter & Android `UdpDiscoveryListener`).
-- Background probing of Tailscale MagicDNS status command to retrieve priority pairing domain names.
 - Manual IP and port input dialog with Compose form validation and fallback connection updates.
-- Robust singleton `OkHttpClient` sharing with `DelegatingSocketFactory` and network-specific fallback resolver to bypass VPN routing.
+- Robust singleton `OkHttpClient` sharing with literal IP resolution for direct local or internet receiver connections.
 
 ## [0.1.7] - 2026-06-02
 ### Fixed
@@ -32,7 +30,7 @@ All notable changes to this project will be documented in this file.
 
 ## [0.1.4] - 2026-06-02
 ### Fixed
-- Pairing QR codes now prefer a real LAN IPv4 address instead of unusable virtual or VPN addresses such as `198.18.0.1`.
+- Pairing QR codes now prefer a real LAN IPv4 address instead of unusable virtual or benchmarking addresses such as `198.18.0.1`.
 - Android pairing retries no longer trigger an invalid `port=0` WebSocket URL crash, and malformed QR payloads now fail with a controlled error state.
 - Android QR scanning is throttled to a single in-flight analysis pass with a shared ML Kit scanner, which reduces the camera freeze seen shortly after entering pairing.
 - The Android home screen no longer shows two competing pairing entry points when there are no paired receivers yet.

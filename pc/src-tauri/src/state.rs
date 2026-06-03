@@ -11,10 +11,16 @@ fn default_true() -> bool {
     true
 }
 
+fn default_empty_string() -> String {
+    String::new()
+}
+
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct DeviceInfo {
     pub id: String,
     pub name: String,
+    #[serde(default = "default_empty_string")]
+    pub alias: String,
     pub os: String,
     pub host: String,
     pub port: u16,
@@ -76,9 +82,6 @@ pub struct AppStateInner {
 
     // Keep mDNS advertiser instance alive
     pub mdns_advertiser: Option<crate::mdns::MdnsAdvertiser>,
-
-    // Tailscale MagicDNS name cached
-    pub tailscale_dns_name: Option<String>,
 }
 
 #[derive(Clone)]
@@ -99,7 +102,6 @@ impl AppState {
                 media_history: Vec::new(),
                 active_pairing_nonce: None,
                 mdns_advertiser: None,
-                tailscale_dns_name: None,
             })),
             close_to_tray: Arc::new(AtomicBool::new(close_to_tray)),
         };

@@ -37,6 +37,18 @@ class ReceiversViewModel(
         }
     }
 
+    fun renameDevice(deviceId: String, alias: String) {
+        viewModelScope.launch {
+            repository.renameDeviceAlias(deviceId, alias)
+        }
+    }
+
+    fun updateInternetEndpoint(deviceId: String, host: String, port: Int) {
+        viewModelScope.launch {
+            repository.updateInternetEndpoint(deviceId, host, port)
+        }
+    }
+
     class Factory(private val repository: PairedDevicesRepository) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {

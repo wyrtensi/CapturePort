@@ -18,16 +18,26 @@
   let pairingQr = $state("");
   let pairingFingerprint = $state("");
   let pairingStatus = $state("Waiting for scanner...");
-  let vpnActive = $state(false);
   let pairingHosts = $state<string[]>([]);
+  let pairingLocalHosts = $state<string[]>([]);
+  let pairingInternetHost = $state("");
+  let pairingInternetPort = $state(7878);
+  let pairingEndpointMode = $state("local-only");
   let mediaHistory = $state<any[]>([]);
   let pairedDevices = $state<any[]>([]);
+  let settingsTab = $state<"general" | "network" | "devices">("general");
+  let firewallStatus = $state("");
   let settings = $state({
     deviceName: "PC-Machine",
     port: 7878,
     mcpEnabled: true,
     autoStart: false,
-    closeToTray: false
+    closeToTray: false,
+    localIpMode: "auto",
+    customLocalHost: "",
+    externalHost: "",
+    externalPort: 7878,
+    externalEnabled: false
   });
 
   // Clipboard Feedback State
@@ -55,16 +65,20 @@
   async function refreshPairingInfo() {
     pairingStatus = "Refreshing QR code...";
     try {
-      const info: any = await invoke("get_pairing_info");
+      const info: any = await invoke("get_pairing_info", { endpointMode: pairingEndpointMode });
       pairingQr = info.qr_svg;
       pairingFingerprint = info.fingerprint;
-      vpnActive = info.vpn_active || false;
       pairingHosts = info.hosts || [];
+      pairingLocalHosts = info.local_hosts || [];
+      pairingInternetHost = info.internet_host || "";
+      pairingInternetPort = info.internet_port || settings.externalPort || settings.port;
       pairingStatus = "Waiting for scanner...";
     } catch (e) {
       pairingQr = "";
       pairingFingerprint = "";
       pairingHosts = [];
+      pairingLocalHosts = [];
+      pairingInternetHost = "";
       pairingStatus = "Failed to load QR code";
     }
   }
@@ -75,6 +89,15 @@
     } catch (e) {
       alert("Failed to toggle MCP exposure");
       await loadPairedDevices();
+    }
+  }
+
+  async function renamePairedDevice(id: string, alias: string) {
+    try {
+      await invoke("rename_paired_device", { id, alias });
+      await loadPairedDevices();
+    } catch (e) {
+      alert("Failed to rename device");
     }
   }
 
@@ -95,8 +118,10 @@
         const info: any = await invoke("regenerate_pc_identity");
         pairingQr = info.qr_svg;
         pairingFingerprint = info.fingerprint;
-        vpnActive = info.vpn_active || false;
         pairingHosts = info.hosts || [];
+        pairingLocalHosts = info.local_hosts || [];
+        pairingInternetHost = info.internet_host || "";
+        pairingInternetPort = info.internet_port || settings.externalPort || settings.port;
         pairingStatus = "Waiting for scanner...";
         await loadPairedDevices();
       } catch (e) {
@@ -112,15 +137,19 @@
       pairingStatus = "Waiting for scanner...";
 
       try {
-        const info: any = await invoke("get_pairing_info");
+        const info: any = await invoke("get_pairing_info", { endpointMode: pairingEndpointMode });
         pairingQr = info.qr_svg;
         pairingFingerprint = info.fingerprint;
-        vpnActive = info.vpn_active || false;
         pairingHosts = info.hosts || [];
+        pairingLocalHosts = info.local_hosts || [];
+        pairingInternetHost = info.internet_host || "";
+        pairingInternetPort = info.internet_port || settings.externalPort || settings.port;
       } catch (e) {
         pairingQr = "";
         pairingFingerprint = "";
         pairingHosts = [];
+        pairingLocalHosts = [];
+        pairingInternetHost = "";
         pairingStatus = "Failed to load QR code";
       }
 
@@ -137,6 +166,10 @@
       try {
         settings = await invoke("get_settings");
       } catch (e) {}
+    }
+
+    if (view === "settings") {
+      await loadPairedDevices();
     }
   }
 
@@ -183,6 +216,38 @@
     } catch (e) {
       alert(`Failed to save settings: ${e}`);
     }
+  }
+
+  async function detectLocalIp() {
+    try {
+      settings.customLocalHost = await invoke("detect_local_advertised_ip");
+      settings.localIpMode = "custom";
+    } catch (e) {
+      alert(`Failed to detect local IP: ${e}`);
+    }
+  }
+
+  async function detectPublicIp() {
+    try {
+      settings.externalHost = await invoke("detect_public_ip");
+      settings.externalEnabled = true;
+    } catch (e) {
+      alert(`Failed to detect public IP: ${e}`);
+    }
+  }
+
+  async function openFirewallPort() {
+    firewallStatus = "Opening system firewall prompt...";
+    try {
+      firewallStatus = await invoke("open_firewall_port", { port: settings.externalPort || settings.port });
+    } catch (e) {
+      firewallStatus = `Firewall setup failed: ${e}`;
+    }
+  }
+
+  function setPairingEndpointMode(mode: string) {
+    pairingEndpointMode = mode;
+    void refreshPairingInfo();
   }
 
   async function openMediaFile(path: string) {
@@ -323,11 +388,11 @@
                 </div>
               </div>
 
-              {#if vpnActive}
-                <div class="vpn-warning-text">
-                  <span>Network route changed. Local pairing may need Wi-Fi access.</span>
-                </div>
-              {/if}
+              <div class="endpoint-mode-group" aria-label="QR endpoint mode">
+                <button class:active={pairingEndpointMode === "local-only"} onclick={() => setPairingEndpointMode("local-only")}>Local only</button>
+                <button class:active={pairingEndpointMode === "local-then-internet"} onclick={() => setPairingEndpointMode("local-then-internet")}>Local + Internet</button>
+                <button class:active={pairingEndpointMode === "internet-only"} onclick={() => setPairingEndpointMode("internet-only")}>Internet only</button>
+              </div>
 
               <div class="connection-details-card">
                 {#if pairingFingerprint}
@@ -377,8 +442,8 @@
                     <div class="ip-addresses-list">
                       {#each pairingHosts as host}
                         <div class="ip-address-row">
-                          <code class="mono-text-blue">{host}:{settings.port}</code>
-                          <button class="copy-action-btn-small" onclick={() => copyToClipboard(`${host}:${settings.port}`, host)} title="Copy Address">
+                          <code class="mono-text-blue">{host}:{host === pairingInternetHost ? pairingInternetPort : settings.port}</code>
+                          <button class="copy-action-btn-small" onclick={() => copyToClipboard(`${host}:${host === pairingInternetHost ? pairingInternetPort : settings.port}`, host)} title="Copy Address">
                             {#if copyTarget === host}
                               <span class="copied-indicator-small animate-scale">Copied!</span>
                             {:else}
@@ -412,41 +477,107 @@
               </footer>
             </div>
 
-            <div class="panel devices-panel">
-              <header class="panel-header">
-                <div class="panel-title">
-                  <span class="title-icon" aria-hidden="true">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                      <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
-                      <circle cx="9" cy="7" r="4" />
-                      <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
-                      <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-                    </svg>
-                  </span>
-                  <h2>Paired Devices</h2>
-                </div>
-                <p>Manage devices allowed to connect to this PC</p>
-              </header>
+          </div>
+        </div>
 
-              <div class="devices-list">
+      {:else if windowLabel === "settings"}
+        <div class="content-header settings-header">
+          <h2>Settings</h2>
+          <p>Configure your local network receiver parameters</p>
+        </div>
+
+        <div class="settings-tabs">
+          <div class="tab-strip">
+            <button class:active={settingsTab === "general"} onclick={() => settingsTab = "general"}>General</button>
+            <button class:active={settingsTab === "network"} onclick={() => settingsTab = "network"}>Network</button>
+            <button class:active={settingsTab === "devices"} onclick={() => settingsTab = "devices"}>Paired Devices</button>
+          </div>
+
+          <form class="settings-form tab-panel" onsubmit={(e) => { e.preventDefault(); saveSettings(); }}>
+            {#if settingsTab === "general"}
+              <div class="form-group">
+                <label for="device-name">Device Name</label>
+                <input id="device-name" type="text" bind:value={settings.deviceName} />
+              </div>
+
+              <div class="form-group">
+                <label for="port">WebSocket Port</label>
+                <input id="port" type="number" bind:value={settings.port} />
+              </div>
+
+              <div class="form-group checkbox-group">
+                <input id="mcp-enabled" type="checkbox" bind:checked={settings.mcpEnabled} />
+                <label for="mcp-enabled">Enable MCP Camera Server for AI agents</label>
+              </div>
+
+              <div class="form-group checkbox-group">
+                <input id="auto-start" type="checkbox" bind:checked={settings.autoStart} />
+                <label for="auto-start">Launch automatically on system startup</label>
+              </div>
+
+              <div class="form-group checkbox-group">
+                <input id="close-to-tray" type="checkbox" bind:checked={settings.closeToTray} />
+                <label for="close-to-tray">Minimize to system tray instead of exiting on window close</label>
+              </div>
+            {:else if settingsTab === "network"}
+              <div class="form-grid">
+                <div class="form-group">
+                  <label for="local-ip-mode">Advertised Local IP</label>
+                  <select id="local-ip-mode" bind:value={settings.localIpMode}>
+                    <option value="auto">Auto</option>
+                    <option value="custom">Custom</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label for="custom-local-host">Custom Local Host</label>
+                  <div class="inline-input">
+                    <input id="custom-local-host" type="text" bind:value={settings.customLocalHost} placeholder="192.168.0.111" />
+                    <button type="button" class="secondary-btn" onclick={detectLocalIp}>Detect</button>
+                  </div>
+                </div>
+                <div class="form-group checkbox-group wide">
+                  <input id="external-enabled" type="checkbox" bind:checked={settings.externalEnabled} />
+                  <label for="external-enabled">Enable internet endpoint in QR codes</label>
+                </div>
+                <div class="form-group">
+                  <label for="external-host">External Host / DDNS</label>
+                  <div class="inline-input">
+                    <input id="external-host" type="text" bind:value={settings.externalHost} placeholder="capture.example.net" />
+                    <button type="button" class="secondary-btn" onclick={detectPublicIp}>Detect</button>
+                  </div>
+                </div>
+                <div class="form-group">
+                  <label for="external-port">External Port</label>
+                  <div class="inline-input">
+                    <input id="external-port" type="number" bind:value={settings.externalPort} />
+                    <button type="button" class="secondary-btn" onclick={openFirewallPort}>Open</button>
+                  </div>
+                </div>
+              </div>
+              {#if firewallStatus}
+                <p class="settings-note">{firewallStatus}</p>
+              {/if}
+              <p class="settings-note">Router port forwarding is manual. Forward the external TCP port to this PC local address and WebSocket port.</p>
+            {:else}
+              <div class="settings-device-list">
                 {#if pairedDevices.length === 0}
                   <div class="empty-devices">
                     <p>No devices paired yet.</p>
-                    <p class="subtitle" style="font-size: 12px; color: #5C5D64; margin-top: 4px;">Use the QR code to pair your first device.</p>
+                    <p class="subtitle">Use the QR code to pair your first device.</p>
                   </div>
                 {:else}
                   {#each pairedDevices as device}
-                    <div class="device-card">
+                    <div class="device-card settings-device-card">
                       <div class="device-info-row">
                         <div class="device-details">
-                          <span class="device-name">{device.name}</span>
+                          <input
+                            class="device-alias-input"
+                            value={device.alias || device.name}
+                            onchange={(e) => renamePairedDevice(device.id, e.currentTarget.value)}
+                          />
                           <span class="device-os">{device.os}</span>
                         </div>
-                        <div class="device-status">
-                          <span class="status-badge" class:online={device.online}>
-                            {device.online ? "Online" : "Offline"}
-                          </span>
-                        </div>
+                        <span class="status-badge" class:online={device.online}>{device.online ? "Online" : "Offline"}</span>
                       </div>
 
                       <div class="device-controls">
@@ -457,53 +588,19 @@
                           </label>
                           <span class="mcp-label">Pass to MCP</span>
                         </div>
-
-                        <button class="unpair-btn" onclick={() => unpairDevice(device.id)}>
-                          Unpair
-                        </button>
+                        <button type="button" class="unpair-btn" onclick={() => unpairDevice(device.id)}>Unpair</button>
                       </div>
                     </div>
                   {/each}
                 {/if}
               </div>
-            </div>
-          </div>
+            {/if}
+
+            {#if settingsTab !== "devices"}
+              <button type="submit" class="submit-btn">Save Configurations</button>
+            {/if}
+          </form>
         </div>
-
-      {:else if windowLabel === "settings"}
-        <div class="content-header">
-          <h2>Settings</h2>
-          <p>Configure your local network receiver parameters</p>
-        </div>
-
-        <form class="settings-form" onsubmit={(e) => { e.preventDefault(); saveSettings(); }}>
-          <div class="form-group">
-            <label for="device-name">Device Name</label>
-            <input id="device-name" type="text" bind:value={settings.deviceName} />
-          </div>
-
-          <div class="form-group">
-            <label for="port">WebSocket Port</label>
-            <input id="port" type="number" bind:value={settings.port} />
-          </div>
-
-          <div class="form-group checkbox-group">
-            <input id="mcp-enabled" type="checkbox" bind:checked={settings.mcpEnabled} />
-            <label for="mcp-enabled">Enable MCP Camera Server for AI agents</label>
-          </div>
-
-          <div class="form-group checkbox-group">
-            <input id="auto-start" type="checkbox" bind:checked={settings.autoStart} />
-            <label for="auto-start">Launch automatically on system startup</label>
-          </div>
-
-          <div class="form-group checkbox-group">
-            <input id="close-to-tray" type="checkbox" bind:checked={settings.closeToTray} />
-            <label for="close-to-tray">Minimize to system tray instead of exiting on window close</label>
-          </div>
-
-          <button type="submit" class="submit-btn">Save Configurations</button>
-        </form>
       {/if}
     </section>
   </div>
@@ -593,7 +690,7 @@
     justify-content: center;
   }
 
-  .pairing-panel, .devices-panel {
+  .pairing-panel {
     flex: 1 1 340px;
     min-width: 320px;
     max-width: 460px;
@@ -614,7 +711,7 @@
     transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
   }
 
-  .pairing-panel:hover, .devices-panel:hover {
+  .pairing-panel:hover {
     border-color: rgba(91, 123, 255, 0.2);
     box-shadow: 
       0 8px 36px rgba(0, 0, 0, 0.4),
@@ -622,10 +719,6 @@
       inset 0 1px 2px rgba(255, 255, 255, 0.05),
       0 32px 64px rgba(0, 0, 0, 0.5);
     transform: translateY(-3px);
-  }
-
-  .devices-panel {
-    align-items: stretch;
   }
 
   .panel-header {
@@ -770,23 +863,34 @@
     letter-spacing: 0.8px;
   }
 
-  .vpn-warning-text {
-    font-size: 12px;
-    font-weight: 500;
-    color: #FFB4AB;
-    margin-top: -8px;
-    margin-bottom: 20px;
-    text-align: center;
-    background: rgba(255, 92, 92, 0.08);
-    border: 1px solid rgba(255, 92, 92, 0.25);
-    border-radius: 12px;
-    padding: 8px 16px;
-    backdrop-filter: blur(10px);
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-    box-shadow: 0 4px 12px rgba(255, 92, 92, 0.1);
+  .endpoint-mode-group {
+    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+    margin: 2px 0 16px;
+  }
+
+  .endpoint-mode-group button,
+  .tab-strip button,
+  .secondary-btn {
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.035);
+    color: #C8CAD2;
+    border-radius: 10px;
+    min-height: 34px;
+    padding: 0 10px;
+    font-size: 11px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: border-color 0.2s ease, background 0.2s ease, color 0.2s ease;
+  }
+
+  .endpoint-mode-group button.active,
+  .tab-strip button.active {
+    border-color: rgba(91, 123, 255, 0.55);
+    background: rgba(59, 91, 255, 0.18);
+    color: #FFFFFF;
   }
 
   /* Connection details card */
@@ -1049,30 +1153,6 @@
   }
 
   /* Devices list and card stylings */
-  .devices-list {
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-    margin-top: 8px;
-    overflow-y: auto;
-    max-height: 420px;
-    padding-right: 6px;
-  }
-
-  .devices-list::-webkit-scrollbar {
-    width: 6px;
-  }
-  .devices-list::-webkit-scrollbar-track {
-    background: transparent;
-  }
-  .devices-list::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.08);
-    border-radius: 3px;
-  }
-  .devices-list::-webkit-scrollbar-thumb:hover {
-    background: rgba(255, 255, 255, 0.15);
-  }
-
   .empty-devices {
     text-align: center;
     color: #989A9F;
@@ -1133,13 +1213,6 @@
     display: flex;
     flex-direction: column;
     gap: 4px;
-  }
-
-  .device-name {
-    font-weight: 600;
-    color: #FFFFFF;
-    font-size: 15px;
-    letter-spacing: -0.2px;
   }
 
   .device-os {
@@ -1243,8 +1316,7 @@
       align-items: stretch;
     }
 
-    .pairing-panel,
-    .devices-panel {
+    .pairing-panel {
       min-width: 0;
       max-width: none;
       padding: 18px;
@@ -1256,8 +1328,7 @@
       scrollbar-gutter: stable;
     }
 
-    .pairing-panel:hover,
-    .devices-panel:hover {
+    .pairing-panel:hover {
       transform: none;
     }
 
@@ -1317,7 +1388,6 @@
       padding: 7px 10px;
     }
 
-    .vpn-warning-text,
     .pairing-warning {
       margin-bottom: 12px;
       padding: 8px 12px;
@@ -1335,12 +1405,6 @@
 
     .status-text {
       font-size: 11px;
-    }
-
-    .devices-list {
-      max-height: 360px;
-      gap: 10px;
-      padding-right: 2px;
     }
 
     .empty-devices {
@@ -1690,11 +1754,86 @@
   }
 
   /* Settings Form Layout */
-  .settings-form {
-    max-width: 480px;
+  .settings-header {
+    flex: 0 0 auto;
+  }
+
+  .settings-tabs {
+    width: min(760px, 100%);
+    min-height: 0;
+    flex: 1;
     display: flex;
     flex-direction: column;
-    gap: 20px;
+    gap: 14px;
+  }
+
+  .tab-strip {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .tab-panel {
+    min-height: 0;
+    flex: 1;
+  }
+
+  .settings-form {
+    max-width: 760px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .form-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+  }
+
+  .form-group.wide {
+    grid-column: 1 / -1;
+  }
+
+  .inline-input {
+    display: flex;
+    gap: 8px;
+  }
+
+  .inline-input input {
+    min-width: 0;
+    flex: 1;
+  }
+
+  .settings-note {
+    color: #8C8E96;
+    font-size: 12px;
+    line-height: 1.5;
+    margin: 0;
+  }
+
+  .settings-device-list {
+    min-height: 0;
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding-right: 6px;
+  }
+
+  .settings-device-card {
+    max-width: none;
+  }
+
+  .device-alias-input {
+    width: 100%;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.035);
+    color: #FFFFFF;
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-weight: 700;
   }
 
   .form-group {

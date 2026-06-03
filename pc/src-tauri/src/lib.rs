@@ -10,22 +10,25 @@ pub mod mdns;
 pub mod net;
 pub mod ws;
 
-use crate::pairing::qr::QrGenerator;
+use crate::pairing::qr::{EndpointMode, PairingEndpoints, QrGenerator};
 use crate::state::AppState;
 use serde_json::json;
 use std::sync::atomic::Ordering;
 use tauri::{Emitter, Manager};
 
 #[tauri::command]
-async fn get_pairing_info(state: tauri::State<'_, AppState>) -> Result<serde_json::Value, String> {
+async fn get_pairing_info(
+    state: tauri::State<'_, AppState>,
+    endpoint_mode: Option<String>,
+) -> Result<serde_json::Value, String> {
     let mut inner = state.inner.lock().unwrap();
     let settings = AppSettings::load();
-    let tailscale_dns = inner.tailscale_dns_name.clone();
+    let endpoints = pairing_endpoints(&settings, endpoint_mode.as_deref());
     let (pair_url, fingerprint, qr_svg, nonce) = QrGenerator::generate_pairing_qr(
         &inner.pc_public_key,
         &inner.pc_private_key,
-        settings.port,
-        tailscale_dns.clone(),
+        endpoints.clone(),
+        settings.device_name.clone(),
     )
     .map_err(|e| e.to_string())?;
 
@@ -35,8 +38,12 @@ async fn get_pairing_info(state: tauri::State<'_, AppState>) -> Result<serde_jso
         "url": pair_url,
         "fingerprint": fingerprint,
         "qr_svg": qr_svg,
-        "vpn_active": crate::net::is_vpn_default_route(),
-        "hosts": QrGenerator::get_pairing_hosts(tailscale_dns)
+        "hosts": endpoints.advertised_hosts(),
+        "local_hosts": endpoints.local_hosts,
+        "local_port": endpoints.local_port,
+        "internet_host": endpoints.internet_host,
+        "internet_port": endpoints.internet_port,
+        "endpoint_mode": endpoints.mode.as_str()
     }))
 }
 
@@ -44,6 +51,7 @@ async fn get_pairing_info(state: tauri::State<'_, AppState>) -> Result<serde_jso
 pub struct PairedDeviceResponse {
     pub id: String,
     pub name: String,
+    pub alias: String,
     pub os: String,
     pub online: bool,
     pub last_seen_ms: u64,
@@ -61,6 +69,7 @@ async fn get_paired_devices(
         list.push(PairedDeviceResponse {
             id: id.clone(),
             name: dev.name.clone(),
+            alias: dev.alias.clone(),
             os: dev.os.clone(),
             online,
             last_seen_ms: dev.last_seen_ms,
@@ -69,6 +78,26 @@ async fn get_paired_devices(
     }
     list.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(list)
+}
+
+#[tauri::command]
+async fn rename_paired_device(
+    state: tauri::State<'_, AppState>,
+    app_handle: tauri::AppHandle,
+    id: String,
+    alias: String,
+) -> Result<(), String> {
+    {
+        let mut inner = state.inner.lock().unwrap();
+        if let Some(dev) = inner.paired_devices.get_mut(&id) {
+            dev.alias = alias.trim().to_string();
+        } else {
+            return Err("Device not found".to_string());
+        }
+    }
+    state.save_paired_devices();
+    let _ = app_handle.emit("devices-changed", ());
+    Ok(())
 }
 
 #[tauri::command]
@@ -128,13 +157,14 @@ async fn regenerate_pc_identity(
 
     // 3. Generate new pairing info
     let settings = AppSettings::load();
-    let tailscale_dns = {
-        let inner = state.inner.lock().unwrap();
-        inner.tailscale_dns_name.clone()
-    };
-    let (pair_url, fingerprint, qr_svg, nonce) =
-        QrGenerator::generate_pairing_qr(&pubkey, &privkey, settings.port, tailscale_dns.clone())
-            .map_err(|e| e.to_string())?;
+    let endpoints = pairing_endpoints(&settings, None);
+    let (pair_url, fingerprint, qr_svg, nonce) = QrGenerator::generate_pairing_qr(
+        &pubkey,
+        &privkey,
+        endpoints.clone(),
+        settings.device_name,
+    )
+    .map_err(|e| e.to_string())?;
 
     {
         let mut inner = state.inner.lock().unwrap();
@@ -148,8 +178,12 @@ async fn regenerate_pc_identity(
         "url": pair_url,
         "fingerprint": fingerprint,
         "qr_svg": qr_svg,
-        "vpn_active": crate::net::is_vpn_default_route(),
-        "hosts": QrGenerator::get_pairing_hosts(tailscale_dns)
+        "hosts": endpoints.advertised_hosts(),
+        "local_hosts": endpoints.local_hosts,
+        "local_port": endpoints.local_port,
+        "internet_host": endpoints.internet_host,
+        "internet_port": endpoints.internet_port,
+        "endpoint_mode": endpoints.mode.as_str()
     }))
 }
 
@@ -194,18 +228,57 @@ fn get_settings_path() -> std::path::PathBuf {
     app_dir.join("settings.json")
 }
 
-#[derive(serde::Deserialize)]
+fn default_port() -> u16 {
+    7878
+}
+
+fn default_true_setting() -> bool {
+    true
+}
+
+fn default_false_setting() -> bool {
+    false
+}
+
+fn default_local_ip_mode() -> String {
+    "auto".to_string()
+}
+
+fn default_empty_string() -> String {
+    String::new()
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 #[allow(dead_code)]
-struct AppSettings {
+pub(crate) struct AppSettings {
     #[serde(rename = "deviceName")]
     device_name: String,
+    #[serde(default = "default_port")]
     port: u16,
     #[serde(rename = "mcpEnabled")]
+    #[serde(default = "default_true_setting")]
     mcp_enabled: bool,
     #[serde(rename = "autoStart")]
+    #[serde(default = "default_false_setting")]
     auto_start: bool,
     #[serde(rename = "closeToTray")]
+    #[serde(default = "default_true_setting")]
     close_to_tray: bool,
+    #[serde(rename = "localIpMode")]
+    #[serde(default = "default_local_ip_mode")]
+    local_ip_mode: String,
+    #[serde(rename = "customLocalHost")]
+    #[serde(default = "default_empty_string")]
+    custom_local_host: String,
+    #[serde(rename = "externalHost")]
+    #[serde(default = "default_empty_string")]
+    external_host: String,
+    #[serde(rename = "externalPort")]
+    #[serde(default = "default_port")]
+    external_port: u16,
+    #[serde(rename = "externalEnabled")]
+    #[serde(default = "default_false_setting")]
+    external_enabled: bool,
 }
 
 impl AppSettings {
@@ -227,32 +300,46 @@ impl AppSettings {
             mcp_enabled: true,
             auto_start: false,
             close_to_tray: true,
+            local_ip_mode: default_local_ip_mode(),
+            custom_local_host: String::new(),
+            external_host: String::new(),
+            external_port: 7878,
+            external_enabled: false,
         }
+    }
+}
+
+pub(crate) fn local_pairing_hosts(settings: &AppSettings) -> Vec<String> {
+    if settings.local_ip_mode == "custom" {
+        let custom = settings.custom_local_host.trim();
+        if !custom.is_empty() {
+            return vec![custom.to_string()];
+        }
+    }
+
+    QrGenerator::get_pairing_hosts()
+}
+
+fn pairing_endpoints(settings: &AppSettings, endpoint_mode: Option<&str>) -> PairingEndpoints {
+    let mode = EndpointMode::from_str(endpoint_mode.unwrap_or("local-only"));
+    let internet_host = settings
+        .external_enabled
+        .then(|| settings.external_host.trim().to_string())
+        .filter(|host| !host.is_empty());
+    let internet_port = internet_host.as_ref().map(|_| settings.external_port);
+
+    PairingEndpoints {
+        local_hosts: local_pairing_hosts(settings),
+        local_port: settings.port,
+        internet_host,
+        internet_port,
+        mode,
     }
 }
 
 #[tauri::command]
 async fn get_settings() -> Result<serde_json::Value, String> {
-    let path = get_settings_path();
-    if path.exists() {
-        if let Ok(content) = std::fs::read_to_string(path) {
-            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
-                return Ok(json);
-            }
-        }
-    }
-
-    let hostname = hostname::get()
-        .map(|h| h.to_string_lossy().into_owned())
-        .unwrap_or_else(|_| "PC-Machine".to_string());
-
-    Ok(json!({
-        "deviceName": hostname,
-        "port": 7878,
-        "mcpEnabled": true,
-        "autoStart": false,
-        "closeToTray": true
-    }))
+    serde_json::to_value(AppSettings::load()).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -260,14 +347,95 @@ async fn save_settings(
     state: tauri::State<'_, AppState>,
     new_settings: serde_json::Value,
 ) -> Result<(), String> {
+    let settings: AppSettings =
+        serde_json::from_value(new_settings).map_err(|e| format!("Invalid settings: {e}"))?;
     let path = get_settings_path();
-    let content = serde_json::to_string_pretty(&new_settings).map_err(|e| e.to_string())?;
+    let content = serde_json::to_string_pretty(&settings).map_err(|e| e.to_string())?;
     std::fs::write(path, content).map_err(|e| e.to_string())?;
-    if let Some(value) = new_settings.get("closeToTray").and_then(|v| v.as_bool()) {
-        state.close_to_tray.store(value, Ordering::Relaxed);
-    }
-    tracing::info!("Settings saved successfully to disk: {:?}", new_settings);
+    state
+        .close_to_tray
+        .store(settings.close_to_tray, Ordering::Relaxed);
+    tracing::info!("Settings saved successfully to disk: {:?}", settings);
     Ok(())
+}
+
+#[tauri::command]
+async fn detect_local_advertised_ip() -> Result<String, String> {
+    QrGenerator::get_local_ip().ok_or_else(|| "No local address found".to_string())
+}
+
+#[tauri::command]
+async fn detect_public_ip() -> Result<String, String> {
+    let output = if cfg!(target_os = "windows") {
+        std::process::Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-Command",
+                "(Invoke-RestMethod -UseBasicParsing https://api.ipify.org).Trim()",
+            ])
+            .output()
+    } else {
+        std::process::Command::new("curl")
+            .args(["-fsSL", "https://api.ipify.org"])
+            .output()
+    }
+    .map_err(|e| e.to_string())?;
+
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+#[tauri::command]
+async fn open_firewall_port(port: u16) -> Result<String, String> {
+    if port == 0 {
+        return Err("Invalid port".to_string());
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let rule = format!(
+            "advfirewall firewall add rule name=\"CapturePort {}\" dir=in action=allow protocol=TCP localport={}",
+            port, port
+        );
+        std::process::Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-Command",
+                &format!("Start-Process netsh -ArgumentList '{}' -Verb RunAs", rule),
+            ])
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        return Ok("Windows Firewall prompt opened.".to_string());
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let script = "do shell script \"/usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate on\" with administrator privileges";
+        std::process::Command::new("osascript")
+            .args(["-e", script])
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        return Ok("macOS firewall authorization prompt opened.".to_string());
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let command = format!(
+            "if command -v firewall-cmd >/dev/null 2>&1; then firewall-cmd --add-port={0}/tcp --permanent && firewall-cmd --reload; elif command -v ufw >/dev/null 2>&1; then ufw allow {0}/tcp; else exit 127; fi",
+            port
+        );
+        std::process::Command::new("pkexec")
+            .args(["sh", "-c", &command])
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        return Ok("Linux firewall authorization prompt opened.".to_string());
+    }
+
+    #[allow(unreachable_code)]
+    Err("Automatic firewall setup is not available on this platform.".to_string())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -312,8 +480,6 @@ pub fn run() {
         let ws_state = state.clone();
         let mdns_state = state.clone();
         let reaper_state = state.clone();
-        let tailscale_state = state.clone();
-        let broadcast_state = state.clone();
 
         tauri::Builder::default()
             .manage(state)
@@ -338,27 +504,7 @@ pub fn run() {
                 let settings = AppSettings::load();
                 let port = settings.port;
 
-                // 1. Spawn periodic Tailscale MagicDNS probe (every 30 seconds)
-                let tailscale_weak = std::sync::Arc::downgrade(&tailscale_state.inner);
-                tauri::async_runtime::spawn(async move {
-                    let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(30));
-                    loop {
-                        interval.tick().await;
-                        let inner_arc = match tailscale_weak.upgrade() {
-                            Some(arc) => arc,
-                            None => break,
-                        };
-                        let dns_name = tokio::task::spawn_blocking(|| {
-                            crate::pairing::qr::QrGenerator::tailscale_magic_name()
-                        })
-                        .await
-                        .unwrap_or(None);
-                        let mut inner = inner_arc.lock().unwrap();
-                        inner.tailscale_dns_name = dns_name;
-                    }
-                });
-
-                // 2. Spawn axum server (gui mode, pass AppHandle)
+                // 1. Spawn axum server (gui mode, pass AppHandle)
                 tauri::async_runtime::spawn(async move {
                     if let Err(e) =
                         crate::ws::WsServer::start(ws_state, Some(server_handle), port).await
@@ -367,15 +513,11 @@ pub fn run() {
                     }
                 });
 
-                // 3. Spawn mDNS advertiser and store inside AppState to keep it alive
+                // 2. Spawn mDNS advertiser and store inside AppState to keep it alive
                 let mdns_state_clone = mdns_state.clone();
                 tauri::async_runtime::spawn(async move {
-                    let initial_dns = tokio::task::spawn_blocking(|| {
-                        crate::pairing::qr::QrGenerator::tailscale_magic_name()
-                    })
-                    .await
-                    .unwrap_or(None);
-                    match crate::mdns::MdnsAdvertiser::start(port, initial_dns) {
+                    let hosts = crate::local_pairing_hosts(&crate::AppSettings::load());
+                    match crate::mdns::MdnsAdvertiser::start(port, hosts) {
                         Ok(adv) => {
                             let mut inner = mdns_state_clone.inner.lock().unwrap();
                             inner.mdns_advertiser = Some(adv);
@@ -386,14 +528,14 @@ pub fn run() {
                     }
                 });
 
-                // 5. Start UDP Broadcast Emitter
+                // 3. Start UDP Broadcast Emitter
                 let pc_public_key = {
-                    let inner = broadcast_state.inner.lock().unwrap();
+                    let inner = mdns_state.inner.lock().unwrap();
                     inner.pc_public_key
                 };
-                crate::net::start_udp_broadcast(port, pc_public_key, broadcast_state);
+                crate::net::start_udp_broadcast(port, pc_public_key);
 
-                // 6. Spawn periodic correlation map reaper task (every 5 seconds)
+                // 4. Spawn periodic correlation map reaper task (every 5 seconds)
                 let reaper_weak = std::sync::Arc::downgrade(&reaper_state.inner);
                 tauri::async_runtime::spawn(async move {
                     let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(5));
@@ -444,7 +586,11 @@ pub fn run() {
                 open_media_file,
                 get_settings,
                 save_settings,
+                detect_local_advertised_ip,
+                detect_public_ip,
+                open_firewall_port,
                 get_paired_devices,
+                rename_paired_device,
                 set_device_mcp_exposure,
                 unpair_device,
                 regenerate_pc_identity

@@ -5,15 +5,111 @@ use if_addrs::{get_if_addrs, IfAddr};
 use qrcodegen::{QrCode, QrCodeEcc};
 use std::net::{IpAddr, Ipv4Addr, UdpSocket};
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum EndpointMode {
+    LocalOnly,
+    LocalThenInternet,
+    InternetOnly,
+}
+
+impl EndpointMode {
+    pub fn from_str(value: &str) -> Self {
+        match value {
+            "internet-only" => Self::InternetOnly,
+            "local-then-internet" => Self::LocalThenInternet,
+            _ => Self::LocalOnly,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::LocalOnly => "local-only",
+            Self::LocalThenInternet => "local-then-internet",
+            Self::InternetOnly => "internet-only",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PairingEndpoints {
+    pub local_hosts: Vec<String>,
+    pub local_port: u16,
+    pub internet_host: Option<String>,
+    pub internet_port: Option<u16>,
+    pub mode: EndpointMode,
+}
+
+impl PairingEndpoints {
+    pub fn advertised_hosts(&self) -> Vec<String> {
+        let mut hosts = Vec::new();
+        let internet = self
+            .internet_host
+            .as_ref()
+            .map(|host| host.trim())
+            .filter(|host| !host.is_empty());
+
+        match self.mode {
+            EndpointMode::LocalOnly => hosts.extend(self.local_hosts.iter().cloned()),
+            EndpointMode::LocalThenInternet => {
+                hosts.extend(self.local_hosts.iter().cloned());
+                if let Some(host) = internet {
+                    hosts.push(host.to_string());
+                }
+            }
+            EndpointMode::InternetOnly => {
+                if let Some(host) = internet {
+                    hosts.push(host.to_string());
+                }
+            }
+        }
+
+        if hosts.is_empty() {
+            hosts.extend(self.local_hosts.iter().cloned());
+        }
+        if hosts.is_empty() {
+            if let Some(host) = internet {
+                hosts.push(host.to_string());
+            }
+        }
+
+        let mut unique = Vec::new();
+        for host in hosts {
+            let trimmed = host.trim();
+            if !trimmed.is_empty() && !unique.iter().any(|existing| existing == trimmed) {
+                unique.push(trimmed.to_string());
+            }
+        }
+        unique
+    }
+
+    pub fn primary_host(&self) -> String {
+        self.advertised_hosts()
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| "127.0.0.1".to_string())
+    }
+
+    pub fn primary_port(&self) -> u16 {
+        match self.mode {
+            EndpointMode::InternetOnly => self.internet_port.unwrap_or(self.local_port),
+            _ => self.local_port,
+        }
+    }
+
+    pub fn internet_port_or_default(&self) -> u16 {
+        self.internet_port.unwrap_or(self.local_port)
+    }
+}
+
 pub struct QrGenerator;
 
 impl QrGenerator {
     // Utility to get the PC's preferred LAN IP for mobile pairing.
-    pub fn get_local_ip(tailscale_dns: Option<String>) -> Option<String> {
-        Self::get_pairing_hosts(tailscale_dns).into_iter().next()
+    pub fn get_local_ip() -> Option<String> {
+        Self::get_pairing_hosts().into_iter().next()
     }
 
-    pub fn get_pairing_hosts(tailscale_dns: Option<String>) -> Vec<String> {
+    pub fn get_pairing_hosts() -> Vec<String> {
         let mut ranked_hosts: Vec<(u8, String)> = Vec::new();
 
         if let Ok(ifaces) = get_if_addrs() {
@@ -31,10 +127,6 @@ impl QrGenerator {
 
         if let Some(routed_ip) = Self::legacy_routed_ip() {
             ranked_hosts.push((0, routed_ip));
-        }
-
-        if let Some(dns) = tailscale_dns {
-            ranked_hosts.push((1, dns));
         }
 
         ranked_hosts.sort_by(|(left_score, left_host), (right_score, right_host)| {
@@ -61,15 +153,8 @@ impl QrGenerator {
         hosts
     }
 
-    // Skip when a VPN tunnel owns the default route; the kernel would otherwise
-    // hand us the TUN address as a "LAN" candidate, which the phone cannot reach.
-    // CGNAT range 100.64.0.0/10 is reserved for this kind of address but is not
-    // a routable LAN destination.
+    // Ask the OS which source address it would use for a normal outbound route.
     fn legacy_routed_ip() -> Option<String> {
-        if crate::net::is_vpn_default_route() {
-            tracing::info!("Default route is a VPN tunnel; skipping legacy_routed_ip()");
-            return None;
-        }
         let socket = UdpSocket::bind("0.0.0.0:0").ok()?;
         socket.connect("8.8.8.8:80").ok()?;
         match socket.local_addr().ok()?.ip() {
@@ -107,7 +192,6 @@ impl QrGenerator {
         is_loopback: bool,
         is_p2p: bool,
     ) -> Option<u8> {
-        let name = iface_name.to_ascii_lowercase();
         let is_host_only_or_virtual = is_loopback || Self::is_host_only_interface_name(iface_name);
         let looks_host_only = Self::looks_like_host_only_network(ip);
 
@@ -115,36 +199,14 @@ impl QrGenerator {
             return None;
         }
 
-        let is_overlay_vpn = is_p2p
-            || crate::net::VPN_NAME_NEEDLES
-                .iter()
-                .any(|needle| name.contains(needle));
-
-        if !is_overlay_vpn && !crate::net::is_usable_ipv4(ip) {
+        if is_p2p || !crate::net::is_usable_ipv4(ip) {
             return None;
-        }
-
-        if is_overlay_vpn {
-            if !Self::is_advertisable_overlay_ipv4(ip) {
-                return None;
-            }
-
-            return Some(3);
         }
 
         match ip.is_private() {
             true => Some(0),
             false => Some(2),
         }
-    }
-
-    fn is_advertisable_overlay_ipv4(ip: Ipv4Addr) -> bool {
-        crate::net::is_usable_ipv4(ip) || Self::is_cgnat_ipv4(ip)
-    }
-
-    fn is_cgnat_ipv4(ip: Ipv4Addr) -> bool {
-        let [a, b, _, _] = ip.octets();
-        a == 100 && (64..=127).contains(&b)
     }
 
     fn looks_like_host_only_network(ip: Ipv4Addr) -> bool {
@@ -157,22 +219,21 @@ impl QrGenerator {
     pub fn generate_pairing_qr(
         pubkey: &[u8; 32],
         privkey: &[u8; 32],
-        port: u16,
-        tailscale_dns: Option<String>,
+        endpoints: PairingEndpoints,
+        device_name: String,
     ) -> Result<(String, String, String, [u8; 32])> {
-        let hosts = Self::get_pairing_hosts(tailscale_dns);
-        let host = hosts
-            .first()
-            .cloned()
-            .unwrap_or_else(|| "127.0.0.1".to_string());
+        let hosts = endpoints.advertised_hosts();
+        let host = endpoints.primary_host();
+        let port = endpoints.primary_port();
         let hosts_param = if hosts.is_empty() {
             host.clone()
         } else {
             hosts.join(",")
         };
-        let hostname = hostname::get()
-            .map(|h| h.to_string_lossy().into_owned())
-            .unwrap_or_else(|_| "Desktop-Machine".to_string());
+        let local_hosts_param = endpoints.local_hosts.join(",");
+        let internet_host = endpoints.internet_host.clone().unwrap_or_default();
+        let internet_port = endpoints.internet_port_or_default();
+        let mode = endpoints.mode.as_str();
 
         let os = if cfg!(target_os = "windows") {
             "windows"
@@ -197,10 +258,14 @@ impl QrGenerator {
         let sig_b64 = BASE64_URL_SAFE_NO_PAD.encode(signature.to_bytes());
 
         // 4. Construct pairing URL
-        let pair_url = format!(
+        let mut pair_url = format!(
             "captureport://pair?v=1&host={}&hosts={}&port={}&pk={}&name={}&os={}&nonce={}&sig={}",
-            host, hosts_param, port, pk_b64, hostname, os, nonce_b64, sig_b64
+            host, hosts_param, port, pk_b64, device_name, os, nonce_b64, sig_b64
         );
+        pair_url.push_str(&format!(
+            "&local_hosts={}&local_port={}&internet_host={}&internet_port={}&endpoint_mode={}",
+            local_hosts_param, endpoints.local_port, internet_host, internet_port, mode
+        ));
 
         // 5. Generate fingerprint: first 8 bytes of sha256(pk) formatted as hex split by colons
         use ring::digest::{digest, SHA256};
@@ -227,40 +292,6 @@ impl QrGenerator {
         let qr_svg_data = format!("data:image/svg+xml;base64,{}", base64_svg);
 
         Ok((pair_url, fingerprint, qr_svg_data, nonce))
-    }
-
-    pub fn tailscale_magic_name() -> Option<String> {
-        let out = if cfg!(target_os = "windows") {
-            // First try command on PATH
-            let run_path = std::process::Command::new("tailscale")
-                .args(["status", "--json"])
-                .output();
-            match run_path {
-                Ok(o) if o.status.success() => Some(o),
-                _ => {
-                    // Fallback to default installer path
-                    let path = "C:\\Program Files\\Tailscale\\tailscale.exe";
-                    std::process::Command::new(path)
-                        .args(["status", "--json"])
-                        .output()
-                        .ok()
-                }
-            }
-        } else {
-            std::process::Command::new("tailscale")
-                .args(["status", "--json"])
-                .output()
-                .ok()
-        }?;
-
-        if !out.status.success() {
-            return None;
-        }
-        let v: serde_json::Value = serde_json::from_slice(&out.stdout).ok()?;
-        v.get("Self")?
-            .get("DNSName")?
-            .as_str()
-            .map(|s| s.trim_end_matches('.').to_string())
     }
 
     // Encodes QR Code modules into a compact vector SVG string
@@ -304,11 +335,11 @@ mod tests {
     #[test]
     fn test_pairing_hosts_sorting() {
         let mut hosts = vec![
-            (0, "my-machine.tailscale.net".to_string()),
             (0, "192.168.1.100".to_string()),
             (0, "192.168.1.2".to_string()),
             (0, "10.0.0.1".to_string()),
             (0, "abc.example.com".to_string()),
+            (0, "capture.example.net".to_string()),
         ];
 
         hosts.sort_by(|(left_score, left_host), (right_score, right_host)| {
@@ -333,13 +364,52 @@ mod tests {
                 "192.168.1.2".to_string(),
                 "192.168.1.100".to_string(),
                 "abc.example.com".to_string(),
-                "my-machine.tailscale.net".to_string(),
+                "capture.example.net".to_string(),
             ]
         );
     }
 
     #[test]
-    fn test_pairing_host_policy_keeps_overlay_vpns_after_lan() {
+    fn test_pairing_endpoint_mode_orders_local_before_internet() {
+        let endpoints = PairingEndpoints {
+            local_hosts: vec!["192.168.0.111".to_string()],
+            local_port: 7878,
+            internet_host: Some("capture.example.net".to_string()),
+            internet_port: Some(9443),
+            mode: EndpointMode::LocalThenInternet,
+        };
+
+        assert_eq!(
+            endpoints.advertised_hosts(),
+            vec![
+                "192.168.0.111".to_string(),
+                "capture.example.net".to_string()
+            ]
+        );
+        assert_eq!(endpoints.primary_host(), "192.168.0.111");
+        assert_eq!(endpoints.primary_port(), 7878);
+    }
+
+    #[test]
+    fn test_pairing_endpoint_mode_can_advertise_internet_only() {
+        let endpoints = PairingEndpoints {
+            local_hosts: vec!["192.168.0.111".to_string()],
+            local_port: 7878,
+            internet_host: Some("capture.example.net".to_string()),
+            internet_port: Some(9443),
+            mode: EndpointMode::InternetOnly,
+        };
+
+        assert_eq!(
+            endpoints.advertised_hosts(),
+            vec!["capture.example.net".to_string()]
+        );
+        assert_eq!(endpoints.primary_host(), "capture.example.net");
+        assert_eq!(endpoints.primary_port(), 9443);
+    }
+
+    #[test]
+    fn test_pairing_host_policy_ignores_host_only_virtual_adapters() {
         assert_eq!(
             QrGenerator::classify_pairing_host_candidate(
                 Ipv4Addr::new(192, 168, 1, 42),
@@ -351,48 +421,12 @@ mod tests {
         );
         assert_eq!(
             QrGenerator::classify_pairing_host_candidate(
-                Ipv4Addr::new(10, 8, 0, 2),
-                "OpenVPN TAP Adapter",
-                false,
-                false,
-            ),
-            Some(3)
-        );
-        assert_eq!(
-            QrGenerator::classify_pairing_host_candidate(
-                Ipv4Addr::new(100, 64, 12, 34),
-                "wg0",
-                false,
-                false,
-            ),
-            Some(3)
-        );
-        assert_eq!(
-            QrGenerator::classify_pairing_host_candidate(
-                Ipv4Addr::new(100, 64, 12, 34),
-                "Wi-Fi",
-                false,
-                false,
-            ),
-            None
-        );
-        assert_eq!(
-            QrGenerator::classify_pairing_host_candidate(
                 Ipv4Addr::new(172, 17, 0, 1),
                 "DockerNAT",
                 false,
                 false,
             ),
             None
-        );
-        assert_eq!(
-            QrGenerator::classify_pairing_host_candidate(
-                Ipv4Addr::new(10, 0, 2, 15),
-                "Ethernet",
-                false,
-                true,
-            ),
-            Some(3)
         );
     }
 }
