@@ -13,11 +13,22 @@ fn is_valid_request_id(id: &str) -> bool {
     !id.is_empty() && id.len() <= 64 && id.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-')
 }
 
+#[derive(Clone)]
 struct IntermediatePairing {
     pubkey_phone: [u8; 32],
     nonce_pc: [u8; 32],
     device_name: String,
     os: String,
+}
+
+#[derive(Clone)]
+enum PairingFlowState {
+    ChallengeSent(IntermediatePairing),
+    ChallengeVerified {
+        pair: IntermediatePairing,
+        device_id: String,
+        token: String,
+    },
 }
 
 pub struct SocketHandler;
@@ -38,7 +49,7 @@ impl SocketHandler {
         });
 
         let mut authenticated_device_id: Option<String> = None;
-        let mut pairing_state: Option<IntermediatePairing> = None;
+        let mut pairing_state: Option<PairingFlowState> = None;
 
         // Reading WebSocket messages loop
         while let Some(Ok(msg)) = receiver.next().await {
@@ -150,12 +161,12 @@ impl SocketHandler {
 
                                         let pubkey_array: [u8; 32] = pubkey_bytes.try_into().unwrap();
 
-                                        pairing_state = Some(IntermediatePairing {
+                                        pairing_state = Some(PairingFlowState::ChallengeSent(IntermediatePairing {
                                             pubkey_phone: pubkey_array,
                                             nonce_pc,
                                             device_name: name.to_string(),
                                             os: os.to_string(),
-                                        });
+                                        }));
 
                                         // Emit progress state to UI
                                         if let Some(h) = &app_handle {
@@ -172,9 +183,12 @@ impl SocketHandler {
                                     }
                                 }
                             }
-                        } else if envelope.t == "resp" && pairing_state.is_some() {
+                        } else if envelope.t == "resp" && matches!(pairing_state, Some(PairingFlowState::ChallengeSent(_))) {
                             // Check challenge response signature
-                            let state_pair = pairing_state.take().unwrap();
+                            let state_pair = match pairing_state.take().unwrap() {
+                                PairingFlowState::ChallengeSent(pair) => pair,
+                                _ => unreachable!(),
+                            };
                             let sig_str = envelope.result.as_ref()
                                 .and_then(|r| r.get("sig"))
                                 .and_then(|s| s.as_str());
@@ -250,14 +264,49 @@ impl SocketHandler {
                                     hash_bytes[4], hash_bytes[5], hash_bytes[6], hash_bytes[7]
                                 );
 
+                                pairing_state = Some(PairingFlowState::ChallengeVerified {
+                                    pair: state_pair,
+                                    device_id: device_id.clone(),
+                                    token,
+                                });
+
+                                if let Some(h) = &app_handle {
+                                    let _ = h.emit("pairing-status", "Fingerprint verified. Waiting for confirmation...");
+                                }
+
+                                let verified_resp = Envelope::new_response(envelope.id, json!({
+                                    "status": "verified",
+                                    "device_id": device_id,
+                                    "fingerprint_phone": fingerprint
+                                }));
+                                let _ = tx.send(Message::Text(serde_json::to_string(&verified_resp).unwrap())).await;
+                            } else {
+                                if let Some(h) = &app_handle {
+                                    let _ = h.emit("pairing-status", "Fingerprint mismatch. Pairing rejected.");
+                                }
+                                let err = Envelope::new_error(envelope.id, 3, "Signature verification failed".to_string());
+                                let _ = tx.send(Message::Text(serde_json::to_string(&err).unwrap())).await;
+                            }
+                        } else if envelope.t == "req" && envelope.method.as_deref() == Some("pair_confirm") {
+                            if let Some(PairingFlowState::ChallengeVerified { pair, device_id, token }) = pairing_state.take() {
+                                // Add to paired devices
+                                use ring::digest::{digest, SHA256};
+                                let hash = digest(&SHA256, &pair.pubkey_phone);
+                                let hash_bytes = hash.as_ref();
+                                let fingerprint = format!(
+                                    "{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+                                    hash_bytes[0], hash_bytes[1], hash_bytes[2], hash_bytes[3],
+                                    hash_bytes[4], hash_bytes[5], hash_bytes[6], hash_bytes[7]
+                                );
+
                                 let mut device_info = DeviceInfo {
                                     id: device_id.clone(),
-                                    name: state_pair.device_name.clone(),
-                                    os: state_pair.os.clone(),
+                                    name: pair.device_name.clone(),
+                                    os: pair.os.clone(),
                                     host: "".to_string(), // Filled in on broadcast
                                     port: 0,
                                     token: token.clone(),
-                                    public_key: state_pair.pubkey_phone,
+                                    public_key: pair.pubkey_phone,
                                     last_seen_ms: SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_millis() as u64,
                                     pinned: false,
                                     exposed_to_mcp: true,
@@ -278,7 +327,7 @@ impl SocketHandler {
                                 }
 
                                 authenticated_device_id = Some(device_id.clone());
-                                state.register_session(device_id.clone(), state_pair.device_name.clone(), tx.clone());
+                                state.register_session(device_id.clone(), pair.device_name.clone(), tx.clone());
 
                                 if let Some(h) = &app_handle {
                                     let _ = h.emit("pairing-status", "Fingerprint verified. Paired!");
@@ -292,10 +341,7 @@ impl SocketHandler {
                                 }));
                                 let _ = tx.send(Message::Text(serde_json::to_string(&paired_resp).unwrap())).await;
                             } else {
-                                if let Some(h) = &app_handle {
-                                    let _ = h.emit("pairing-status", "Fingerprint mismatch. Pairing rejected.");
-                                }
-                                let err = Envelope::new_error(envelope.id, 3, "Signature verification failed".to_string());
+                                let err = Envelope::new_error(envelope.id, 6, "Invalid pairing state for confirmation".to_string());
                                 let _ = tx.send(Message::Text(serde_json::to_string(&err).unwrap())).await;
                             }
                         }

@@ -229,6 +229,8 @@ class PairingViewModel(
 
         var handshakeStarted = false
         val listener = object : WebSocketListener() {
+            private var currentDeviceId: String? = null
+
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 if (!isCurrentAttempt(attemptId)) {
                     webSocket.cancel()
@@ -293,10 +295,27 @@ class PairingViewModel(
                         webSocket.send(EnvelopeCodec.encodeEnvelope(resp))
                     } else if (envelope.t == "resp" && envelope.result != null) {
                         val status = envelope.result.optString("status")
-                        if (status == "paired") {
-                            val deviceId = envelope.result.getString("device_id")
-                            val token = envelope.result.getString("token")
+                        if (status == "verified") {
+                            val deviceId = envelope.result.optString("device_id")
+                            if (deviceId.isNotEmpty()) {
+                                currentDeviceId = deviceId
+                            }
                             val fingerprint = envelope.result.getString("fingerprint_phone")
+
+                            _uiState.value = PairingState.FingerprintVerification(fingerprint) {
+                                _uiState.value = PairingState.Handshaking
+                                val confirmId = "P_CONFIRM_" + System.nanoTime()
+                                val confirmReq = Envelope(
+                                    t = "req",
+                                    id = confirmId,
+                                    method = "pair_confirm",
+                                    params = JSONObject()
+                                )
+                                webSocket.send(EnvelopeCodec.encodeEnvelope(confirmReq))
+                            }
+                        } else if (status == "paired") {
+                            val deviceId = envelope.result.optString("device_id").takeIf { it.isNotEmpty() } ?: currentDeviceId ?: ""
+                            val token = envelope.result.getString("token")
                             val pcPublicKeyBytes = Base64.decode(requestData.pcPublicKeyB64, Base64.URL_SAFE or Base64.NO_PADDING)
 
                             val newDevice = PairedDevice.newBuilder()
@@ -310,13 +329,11 @@ class PairingViewModel(
                                 .setLastSeenMs(System.currentTimeMillis())
                                 .build()
 
-                            _uiState.value = PairingState.FingerprintVerification(fingerprint) {
-                                viewModelScope.launch(Dispatchers.IO) {
-                                    repository.addDevice(newDevice)
-                                    _uiState.value = PairingState.Success
-                                    webSocket.close(1000, "Pairing success")
-                                    pairingSocket = null
-                                }
+                            viewModelScope.launch(Dispatchers.IO) {
+                                repository.addDevice(newDevice)
+                                _uiState.value = PairingState.Success
+                                webSocket.close(1000, "Pairing success")
+                                pairingSocket = null
                             }
                         }
                     } else if (envelope.error != null) {

@@ -30,6 +30,20 @@
     closeToTray: false
   });
 
+  // Clipboard Feedback State
+  let copyTarget = $state("");
+  let copyTimeout: any;
+
+  function copyToClipboard(text: string, label: string = "fingerprint") {
+    navigator.clipboard.writeText(text).then(() => {
+      copyTarget = label;
+      if (copyTimeout) clearTimeout(copyTimeout);
+      copyTimeout = setTimeout(() => {
+        copyTarget = "";
+      }, 2000);
+    }).catch(() => {});
+  }
+
   async function loadPairedDevices() {
     try {
       pairedDevices = await invoke("get_paired_devices");
@@ -295,12 +309,18 @@
 
               <!-- svelte-ignore a11y_click_events_have_key_events -->
               <!-- svelte-ignore a11y_no_static_element_interactions -->
-              <div class="qr-container" onclick={refreshPairingInfo} title="Click to refresh QR Code">
-                {#if pairingQr}
-                  <img src={pairingQr} class="qr-graphic-img" alt="Pairing QR Code" />
-                {:else}
-                  <div class="qr-placeholder spinner"></div>
-                {/if}
+              <div class="qr-polaroid" onclick={refreshPairingInfo} title="Click to refresh QR Code">
+                <div class="qr-photo-area">
+                  {#if pairingQr}
+                    <img src={pairingQr} class="qr-graphic-img" alt="Pairing QR Code" />
+                  {:else}
+                    <div class="qr-placeholder spinner"></div>
+                  {/if}
+                </div>
+                <div class="qr-polaroid-caption">
+                  <span class="caption-title">Scan to Pair</span>
+                  <span class="caption-subtitle">Click to refresh</span>
+                </div>
               </div>
 
               {#if vpnActive}
@@ -309,23 +329,71 @@
                 </div>
               {/if}
 
-              {#if pairingFingerprint}
-                <div class="fingerprint-box">
-                  <span class="label">FINGERPRINT</span>
-                  <code class="fingerprint">{pairingFingerprint}</code>
-                </div>
-              {/if}
-
-              {#if pairingHosts.length > 0}
-                <div class="manual-ips-box">
-                  <span class="label">MANUAL IP ADDRESS(ES)</span>
-                  <div class="ips-list">
-                    {#each pairingHosts as host}
-                      <code>{host}:{settings.port}</code>
-                    {/each}
+              <div class="connection-details-card">
+                {#if pairingFingerprint}
+                  <div class="detail-section">
+                    <div class="detail-label-row">
+                      <span class="detail-label-title">
+                        <svg class="icon-small" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                          <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                          <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                        </svg>
+                        Device Fingerprint
+                      </span>
+                      <button class="copy-action-btn" onclick={() => copyToClipboard(pairingFingerprint, 'fingerprint')} title="Copy fingerprint">
+                        {#if copyTarget === 'fingerprint'}
+                          <span class="copied-indicator animate-scale">Copied!</span>
+                        {:else}
+                          <svg class="copy-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                          </svg>
+                        {/if}
+                      </button>
+                    </div>
+                    <div class="detail-value-box">
+                      <code class="mono-text">{pairingFingerprint}</code>
+                    </div>
                   </div>
-                </div>
-              {/if}
+                {/if}
+
+                {#if pairingFingerprint && pairingHosts.length > 0}
+                  <div class="detail-divider"></div>
+                {/if}
+
+                {#if pairingHosts.length > 0}
+                  <div class="detail-section">
+                    <div class="detail-label-row">
+                      <span class="detail-label-title">
+                        <svg class="icon-small" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                          <rect x="2" y="2" width="20" height="8" rx="2" ry="2"/>
+                          <rect x="2" y="14" width="20" height="8" rx="2" ry="2"/>
+                          <line x1="6" y1="6" x2="6.01" y2="6"/>
+                          <line x1="6" y1="18" x2="6.01" y2="18"/>
+                        </svg>
+                        Manual IP Addresses
+                      </span>
+                    </div>
+                    <div class="ip-addresses-list">
+                      {#each pairingHosts as host}
+                        <div class="ip-address-row">
+                          <code class="mono-text-blue">{host}:{settings.port}</code>
+                          <button class="copy-action-btn-small" onclick={() => copyToClipboard(`${host}:${settings.port}`, host)} title="Copy Address">
+                            {#if copyTarget === host}
+                              <span class="copied-indicator-small animate-scale">Copied!</span>
+                            {:else}
+                              <svg class="copy-icon-small" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                              </svg>
+                            {/if}
+                          </button>
+                        </div>
+                      {/each}
+                    </div>
+                  </div>
+                {/if}
+              </div>
 
               {#if pairedDevices.length > 0}
                 <div class="pairing-warning">
@@ -528,30 +596,31 @@
     flex: 1 1 340px;
     min-width: 320px;
     max-width: 460px;
-    background: rgba(20, 22, 28, 0.45);
-    backdrop-filter: blur(20px) saturate(140%);
-    -webkit-backdrop-filter: blur(20px) saturate(140%);
-    border: 1px solid rgba(255, 255, 255, 0.06);
-    border-radius: 24px;
+    background: rgba(13, 14, 18, 0.45);
+    backdrop-filter: blur(24px) saturate(150%);
+    -webkit-backdrop-filter: blur(24px) saturate(150%);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 28px;
     padding: 32px;
     display: flex;
     flex-direction: column;
     align-items: center;
     box-shadow: 
-      0 4px 30px rgba(0, 0, 0, 0.2),
-      inset 0 1px 1px rgba(255, 255, 255, 0.05),
-      0 20px 40px rgba(0, 0, 0, 0.3);
+      0 4px 30px rgba(0, 0, 0, 0.3),
+      inset 0 1px 1px rgba(255, 255, 255, 0.03),
+      0 24px 48px rgba(0, 0, 0, 0.4);
     box-sizing: border-box;
-    transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
   }
 
   .pairing-panel:hover, .devices-panel:hover {
-    border-color: rgba(164, 180, 255, 0.18);
+    border-color: rgba(91, 123, 255, 0.2);
     box-shadow: 
-      0 8px 32px rgba(0, 0, 0, 0.3),
-      inset 0 1px 2px rgba(255, 255, 255, 0.08),
-      0 24px 48px rgba(0, 0, 0, 0.4);
-    transform: translateY(-2px);
+      0 8px 36px rgba(0, 0, 0, 0.4),
+      0 0 25px rgba(59, 91, 255, 0.06),
+      inset 0 1px 2px rgba(255, 255, 255, 0.05),
+      0 32px 64px rgba(0, 0, 0, 0.5);
+    transform: translateY(-3px);
   }
 
   .devices-panel {
@@ -604,46 +673,67 @@
     font-weight: 400;
   }
 
-  .qr-container {
-    background: #ffffff;
-    border: 8px solid #ffffff;
-    padding: 12px;
+  /* Redesigned QR Card */
+  .qr-polaroid {
+    background: rgba(255, 255, 255, 0.025);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    padding: 16px;
     border-radius: 20px;
     box-shadow: 
-      0 10px 40px rgba(0, 0, 0, 0.5),
-      0 0 0 1px rgba(255, 255, 255, 0.1);
+      0 20px 40px rgba(0, 0, 0, 0.4),
+      0 0 30px rgba(59, 91, 255, 0.08),
+      inset 0 1px 1px rgba(255, 255, 255, 0.05);
     margin-bottom: 24px;
-    width: 220px;
-    height: 220px;
+    width: 200px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    cursor: pointer;
+    transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    position: relative;
+    overflow: hidden;
+  }
+
+  .qr-polaroid:hover {
+    transform: scale(1.03) translateY(-4px);
+    border-color: rgba(164, 180, 255, 0.25);
+    box-shadow: 
+      0 24px 48px rgba(0, 0, 0, 0.5),
+      0 0 40px rgba(59, 91, 255, 0.2),
+      inset 0 1px 2px rgba(255, 255, 255, 0.1);
+  }
+
+  .qr-polaroid:active {
+    transform: scale(0.98) translateY(-1px);
+  }
+
+  .qr-photo-area {
+    width: 100%;
+    aspect-ratio: 1;
+    background: #ffffff;
+    border-radius: 12px;
+    overflow: hidden;
     display: flex;
     align-items: center;
     justify-content: center;
-    cursor: pointer;
-    transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-  }
-
-  .qr-container:hover {
-    transform: scale(1.05) rotate(1.5deg);
-    box-shadow: 
-      0 20px 50px rgba(59, 91, 255, 0.35),
-      0 0 0 1px rgba(164, 180, 255, 0.25);
-  }
-
-  .qr-container:active {
-    transform: scale(0.97);
+    padding: 8px;
+    box-sizing: border-box;
+    box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.1);
   }
 
   .qr-graphic-img {
     width: 100%;
     height: 100%;
     object-fit: contain;
-    border-radius: 8px;
   }
 
   .qr-placeholder {
-    width: 60px;
-    height: 60px;
-    border: 3px solid rgba(59, 91, 255, 0.2);
+    width: 48px;
+    height: 48px;
+    border: 3px solid rgba(59, 91, 255, 0.1);
     border-top: 3px solid #3B5BFF;
     border-radius: 50%;
     animation: spin 1s cubic-bezier(0.55, 0.055, 0.675, 0.19) infinite;
@@ -652,6 +742,31 @@
   @keyframes spin {
     0% { transform: rotate(0deg); }
     100% { transform: rotate(360deg); }
+  }
+
+  .qr-polaroid-caption {
+    margin-top: 14px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    user-select: none;
+  }
+
+  .qr-polaroid-caption .caption-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: #FFFFFF;
+    letter-spacing: -0.2px;
+  }
+
+  .qr-polaroid-caption .caption-subtitle {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 8.5px;
+    font-weight: 600;
+    color: #8c8e96;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
   }
 
   .vpn-warning-text {
@@ -673,78 +788,164 @@
     box-shadow: 0 4px 12px rgba(255, 92, 92, 0.1);
   }
 
-  .fingerprint-box {
-    background: rgba(255, 255, 255, 0.02);
-    border: 1px solid rgba(255, 255, 255, 0.06);
-    border-radius: 16px;
-    padding: 12px 24px;
-    text-align: center;
-    margin-bottom: 20px;
+  /* Connection details card */
+  .connection-details-card {
+    background: rgba(255, 255, 255, 0.015);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 20px;
     width: 100%;
     box-sizing: border-box;
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
-  }
-
-  .fingerprint-box .label {
-    display: block;
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 2px;
-    color: #3B5BFF;
-    margin-bottom: 6px;
-  }
-
-  .fingerprint-box .fingerprint {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 15px;
-    color: #E3E3E6;
-    font-weight: 600;
-    letter-spacing: 0.5px;
-  }
-
-  .manual-ips-box {
-    background: rgba(255, 255, 255, 0.02);
-    border: 1px solid rgba(255, 255, 255, 0.06);
-    border-radius: 16px;
-    padding: 14px 24px;
-    text-align: center;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
     margin-bottom: 24px;
-    width: 100%;
-    box-sizing: border-box;
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
   }
 
-  .manual-ips-box .label {
-    display: block;
-    font-size: 10px;
+  .detail-section {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: 100%;
+  }
+
+  .detail-label-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .detail-label-title {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
     font-weight: 700;
+    text-transform: uppercase;
     letter-spacing: 1.5px;
     color: #3B5BFF;
-    margin-bottom: 10px;
   }
 
-  .manual-ips-box .ips-list {
+  .icon-small {
+    width: 14px;
+    height: 14px;
+    color: #3B5BFF;
+    opacity: 0.85;
+  }
+
+  .detail-value-box {
+    background: rgba(0, 0, 0, 0.25);
+    border: 1px solid rgba(255, 255, 255, 0.04);
+    border-radius: 12px;
+    padding: 10px 14px;
     display: flex;
-    flex-wrap: wrap;
+    align-items: center;
     justify-content: center;
-    gap: 8px;
+    position: relative;
   }
 
-  .manual-ips-box code {
+  .mono-text {
     font-family: 'JetBrains Mono', monospace;
-    font-size: 12px;
-    background-color: rgba(0, 0, 0, 0.25);
-    padding: 6px 12px;
-    border-radius: 8px;
-    color: #A4B4FF;
-    border: 1px solid rgba(164, 180, 255, 0.15);
+    font-size: 13px;
+    font-weight: 500;
+    color: #e3e3e6;
+    letter-spacing: 0.5px;
+    word-break: break-all;
+  }
+
+  .detail-divider {
+    height: 1px;
+    background: rgba(255, 255, 255, 0.06);
+    width: 100%;
+  }
+
+  .ip-addresses-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: 100%;
+  }
+
+  .ip-address-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: rgba(0, 0, 0, 0.2);
+    border: 1px solid rgba(255, 255, 255, 0.03);
+    border-radius: 10px;
+    padding: 8px 14px;
     transition: all 0.2s ease;
   }
 
-  .manual-ips-box code:hover {
-    background-color: rgba(59, 91, 255, 0.1);
-    border-color: rgba(59, 91, 255, 0.4);
+  .ip-address-row:hover {
+    background: rgba(59, 91, 255, 0.05);
+    border-color: rgba(59, 91, 255, 0.15);
+  }
+
+  .mono-text-blue {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: #A4B4FF;
+  }
+
+  /* Copy Button and animation */
+  .copy-action-btn, .copy-action-btn-small {
+    background: none;
+    border: none;
+    color: #8c8e96;
+    cursor: pointer;
+    padding: 4px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+  }
+
+  .copy-action-btn:hover, .copy-action-btn-small:hover {
+    background: rgba(255, 255, 255, 0.05);
     color: #FFFFFF;
+  }
+
+  .copy-icon {
+    width: 14px;
+    height: 14px;
+  }
+
+  .copy-icon-small {
+    width: 13px;
+    height: 13px;
+  }
+
+  .copied-indicator {
+    font-size: 10px;
+    font-weight: 600;
+    color: #3bff8a;
+    background: rgba(59, 255, 138, 0.1);
+    padding: 2px 6px;
+    border-radius: 6px;
+    border: 1px solid rgba(59, 255, 138, 0.2);
+  }
+
+  .copied-indicator-small {
+    font-size: 9px;
+    font-weight: 600;
+    color: #3bff8a;
+    background: rgba(59, 255, 138, 0.1);
+    padding: 1px 5px;
+    border-radius: 4px;
+    border: 1px solid rgba(59, 255, 138, 0.15);
+  }
+
+  .animate-scale {
+    animation: scaleIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+
+  @keyframes scaleIn {
+    from { opacity: 0; transform: scale(0.9); }
+    to { opacity: 1; transform: scale(1); }
   }
 
   .pairing-warning {

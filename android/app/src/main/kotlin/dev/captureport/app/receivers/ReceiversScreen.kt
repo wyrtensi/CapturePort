@@ -263,7 +263,7 @@ fun ReceiversScreen(
                     )
                     Spacer(modifier = Modifier.width(4.dp))
                     Text(
-                        text = "VPN Bypass Active?",
+                        text = "VPN Bypass Active",
                         color = Color(0xFFFFB4AB),
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold

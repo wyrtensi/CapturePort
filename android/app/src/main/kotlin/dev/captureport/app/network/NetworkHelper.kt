@@ -103,8 +103,9 @@ object NetworkHelper {
             val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return
             if (shouldBypassVpn(address, cm)) {
                 val nonVpnNetwork = getNonVpnNetwork(context)
-                if (nonVpnNetwork != null) {
+                if (nonVpnNetwork != null && !this.isBound) {
                     try {
+                        this.keepAlive = true
                         nonVpnNetwork.bindSocket(this)
                         Log.i("VpnBypassSocket", "Successfully bound socket to bypass VPN for address: $address")
                     } catch (e: Exception) {

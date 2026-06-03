@@ -1,21 +1,27 @@
 package dev.captureport.app.network
 
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
 import android.net.wifi.WifiManager
 import android.util.Base64
 import android.util.Log
 import dev.captureport.app.data.datastore.PairedDevicesRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.json.JSONObject
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.SocketException
 import java.util.Arrays
-
-import kotlinx.coroutines.Job
 
 class UdpDiscoveryListener(
     private val context: Context,
@@ -26,11 +32,55 @@ class UdpDiscoveryListener(
     private var multicastLock: WifiManager.MulticastLock? = null
     private var isRunning = false
     private var job: Job? = null
- 
+    private var networkCallback: ConnectivityManager.NetworkCallback? = null
+    private val restartMutex = Mutex()
+
     fun start() {
-        if (isRunning) return
-        isRunning = true
- 
+        scope.launch(Dispatchers.IO) {
+            restartMutex.withLock {
+                if (isRunning) return@withLock
+                isRunning = true
+
+                val cm = context.applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+                if (cm != null && networkCallback == null) {
+                    val callback = object : ConnectivityManager.NetworkCallback() {
+                        override fun onAvailable(network: Network) {
+                            Log.i("UdpDiscoveryListener", "Network available, restarting UDP listener")
+                            restartSocket()
+                        }
+
+                        override fun onLost(network: Network) {
+                            Log.i("UdpDiscoveryListener", "Network lost, restarting UDP listener")
+                            restartSocket()
+                        }
+                    }
+                    networkCallback = callback
+                    try {
+                        cm.registerDefaultNetworkCallback(callback)
+                    } catch (e: Exception) {
+                        Log.e("UdpDiscoveryListener", "Failed to register network callback: ${e.message}")
+                    }
+                }
+
+                startListeningJobLocked()
+            }
+        }
+    }
+
+    private fun restartSocket() {
+        scope.launch(Dispatchers.IO) {
+            restartMutex.withLock {
+                if (!isRunning) return@withLock
+                Log.i("UdpDiscoveryListener", "Restarting UDP discovery listening job")
+                job?.cancelAndJoin()
+                startListeningJobLocked()
+            }
+        }
+    }
+
+    private fun startListeningJobLocked() {
+        cleanupSocketAndLock()
+
         job = scope.launch(Dispatchers.IO) {
             try {
                 val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
@@ -38,14 +88,38 @@ class UdpDiscoveryListener(
                     setReferenceCounted(false)
                     acquire()
                 }
- 
-                socket = DatagramSocket(5354).apply {
+
+                val newSocket = DatagramSocket(null as java.net.SocketAddress?).apply {
+                    reuseAddress = true
                     broadcast = true
                 }
- 
+                socket = newSocket
+
+                // Check VPN state and bind socket if VPN is active
+                val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+                val activeNetwork = cm?.activeNetwork
+                val caps = activeNetwork?.let { cm.getNetworkCapabilities(it) }
+                val isVpnActive = caps?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true
+
+                if (isVpnActive) {
+                    val nonVpnNetwork = NetworkHelper.getNonVpnNetwork(context)
+                    if (nonVpnNetwork != null) {
+                        try {
+                            nonVpnNetwork.bindSocket(newSocket)
+                            Log.i("UdpDiscoveryListener", "Bound UDP socket to physical network to bypass VPN: $nonVpnNetwork")
+                        } catch (e: Exception) {
+                            Log.e("UdpDiscoveryListener", "Failed to bind UDP socket to physical network: ${e.message}")
+                        }
+                    } else {
+                        Log.w("UdpDiscoveryListener", "VPN is active but no physical non-VPN network was found")
+                    }
+                }
+
+                newSocket.bind(java.net.InetSocketAddress(5354))
+
                 val buffer = ByteArray(4096)
                 Log.i("UdpDiscoveryListener", "UDP Discovery Listener started on port 5354")
- 
+
                 while (isRunning) {
                     val packet = DatagramPacket(buffer, buffer.size)
                     try {
@@ -53,16 +127,17 @@ class UdpDiscoveryListener(
                     } catch (e: Exception) {
                         if (!isRunning) break
                         Log.e("UdpDiscoveryListener", "Socket receive error: ${e.message}")
+                        delay(1000)
                         continue
                     }
- 
+
                     val message = String(packet.data, 0, packet.length)
                     try {
                         val payload = JSONObject(message)
                         val idBase64 = payload.optString("id")
                         val hosts = payload.optString("hosts")
                         val port = payload.optInt("port")
- 
+
                         if (idBase64.isNotEmpty() && hosts.isNotEmpty() && port > 0) {
                             val decodedPk = Base64.decode(idBase64, Base64.URL_SAFE or Base64.NO_PADDING)
                             val devices = repository.pairedDevicesFlow.first()
@@ -86,29 +161,19 @@ class UdpDiscoveryListener(
             } catch (e: Exception) {
                 Log.e("UdpDiscoveryListener", "Error in UDP listener: ${e.message}")
             } finally {
-                stop()
-            }
-        }.apply {
-            invokeOnCompletion {
-                stop()
+                cleanupSocketAndLock()
             }
         }
     }
- 
-    fun stop() {
-        if (!isRunning && socket == null && multicastLock == null) return
-        isRunning = false
-        val currentJob = job
-        job = null
-        currentJob?.cancel()
- 
+
+    private fun cleanupSocketAndLock() {
         try {
             socket?.close()
         } catch (e: Exception) {
             // ignore
         }
         socket = null
- 
+
         try {
             if (multicastLock?.isHeld == true) {
                 multicastLock?.release()
@@ -117,6 +182,28 @@ class UdpDiscoveryListener(
             // ignore
         }
         multicastLock = null
-        Log.i("UdpDiscoveryListener", "UDP Discovery Listener stopped")
+    }
+
+    fun stop() {
+        scope.launch(Dispatchers.IO) {
+            restartMutex.withLock {
+                if (!isRunning) return@withLock
+                isRunning = false
+
+                val cm = context.applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+                networkCallback?.let { callback ->
+                    try {
+                        cm?.unregisterNetworkCallback(callback)
+                    } catch (e: Exception) {
+                        Log.e("UdpDiscoveryListener", "Failed to unregister network callback: ${e.message}")
+                    }
+                }
+                networkCallback = null
+
+                job?.cancelAndJoin()
+                cleanupSocketAndLock()
+                Log.i("UdpDiscoveryListener", "UDP Discovery Listener stopped")
+            }
+        }
     }
 }
