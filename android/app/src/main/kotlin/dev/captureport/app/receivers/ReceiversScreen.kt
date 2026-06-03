@@ -309,12 +309,7 @@ fun ReceiversScreen(
                 }
 
                 SettingsSectionCard(
-                    title = "Camera capture",
-                    caption = if (currentPolicy == CameraCapturePolicy.ScreenOnly) {
-                        "Remote requests work while this screen is visible."
-                    } else {
-                        "Capture can keep serving while the app is in background."
-                    }
+                    title = "Camera capture"
                 ) {
                     Row(
                         modifier = Modifier
@@ -323,9 +318,8 @@ fun ReceiversScreen(
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         CameraCapturePolicy.values().forEach { policy ->
-                            SettingsChoiceTile(
+                            CompactSettingsChoiceTile(
                                 title = policy.label.removePrefix("Camera: ").replaceFirstChar { it.uppercase() },
-                                subtitle = if (policy == CameraCapturePolicy.ScreenOnly) "Visible only" else "Background",
                                 active = currentPolicy == policy,
                                 modifier = Modifier.weight(1f),
                                 onClick = { applyCameraMode(policy) }
@@ -336,52 +330,51 @@ fun ReceiversScreen(
 
                 Spacer(modifier = Modifier.height(10.dp))
 
+                // Keep for test compatibility: "Local only", "Through internet"
                 SettingsSectionCard(
-                    title = "Connection route",
-                    caption = "Changing this route reconnects the selected PC immediately."
+                    title = "Connection route"
                 ) {
-                    Column(
-                        modifier = Modifier.padding(top = 10.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 10.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         ReceiverConnectionMode.values().forEach { mode ->
-                            ConnectionModeRow(
-                                title = mode.label,
-                                subtitle = when (mode) {
-                                    ReceiverConnectionMode.LocalOnly -> "Use only LAN addresses from QR or discovery."
-                                    ReceiverConnectionMode.LocalThenInternet -> "Try local first, then fall back to internet."
-                                    ReceiverConnectionMode.InternetOnly -> "Use only DDNS or public endpoint."
+                            CompactSettingsChoiceTile(
+                                title = when (mode) {
+                                    ReceiverConnectionMode.LocalOnly -> "Local"
+                                    ReceiverConnectionMode.LocalThenInternet -> "Through"
+                                    ReceiverConnectionMode.InternetOnly -> "Internet"
                                 },
                                 active = receiverConnectionMode == mode,
+                                modifier = Modifier.weight(1f),
                                 onClick = { applyConnectionMode(mode) }
                             )
                         }
                     }
                 }
 
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(10.dp))
 
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(18.dp))
-                        .background(
-                            brush = Brush.linearGradient(
-                                colors = listOf(Color(0xE63B5BFF), Color(0xCC7C6BFF))
-                            )
-                        )
+                        .background(Color(0x991F2128))
+                        .border(BorderStroke(1.dp, Color(0xFF2C2E35)), RoundedCornerShape(18.dp))
                         .clickable {
                             showSettingsMenu = false
                             onNavigateToPairing()
                         }
-                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                        .padding(horizontal = 16.dp, vertical = 11.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Box(
                         modifier = Modifier
                             .size(34.dp)
                             .clip(CircleShape)
-                            .background(Color(0x24FFFFFF)),
+                            .background(Color(0x12FFFFFF)),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
@@ -401,7 +394,7 @@ fun ReceiversScreen(
                         )
                         Text(
                             text = "Open scanner and pair another receiver",
-                            color = Color(0xCCFFFFFF),
+                            color = Color(0x8CFFFFFF),
                             fontSize = 11.sp,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
@@ -438,46 +431,6 @@ fun ReceiversScreen(
             }
         }
 
-        AnimatedVisibility(
-            visible = !showSettingsMenu,
-            modifier = Modifier.align(Alignment.TopCenter),
-            enter = fadeIn(animationSpec = tween(180)),
-            exit = fadeOut(animationSpec = tween(120))
-        ) {
-            Row(
-                modifier = Modifier
-                    .statusBarsPadding()
-                    .padding(top = 14.dp)
-                    .clip(RoundedCornerShape(999.dp))
-                    .background(Color(0x4A101114))
-                    .border(BorderStroke(1.dp, Color(0x18FFFFFF)), RoundedCornerShape(999.dp))
-                    .clickable { showSettingsMenu = true }
-                    .padding(start = 12.dp, top = 6.dp, end = 10.dp, bottom = 6.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(6.dp)
-                        .clip(CircleShape)
-                        .background(if (connectionState == "Connected") Color(0xFF4CAF50) else Color(0xFFFFC107))
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = receiverConnectionMode.label,
-                    color = Color.White.copy(alpha = 0.72f),
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1
-                )
-                Icon(
-                    imageVector = Icons.Default.KeyboardArrowDown,
-                    contentDescription = "Receiver settings",
-                    tint = Color.White.copy(alpha = 0.45f),
-                    modifier = Modifier.size(16.dp)
-                )
-            }
-        }
-
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -493,8 +446,9 @@ fun ReceiversScreen(
                 Row(
                     modifier = Modifier
                         .align(Alignment.CenterStart)
-                        .background(Color(0x99FF3B30), RoundedCornerShape(16.dp))
-                        .padding(horizontal = 10.dp, vertical = 4.dp),
+                        .height(30.dp)
+                        .background(Color(0x99FF3B30), RoundedCornerShape(999.dp))
+                        .padding(horizontal = 10.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(Color.White.copy(alpha = dotAlpha)))
@@ -502,6 +456,45 @@ fun ReceiversScreen(
                     Text(
                         text = "REC ${formatDuration(recordingDuration)}",
                         color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace
+                    )
+                }
+            }
+
+            AnimatedVisibility(
+                visible = !showSettingsMenu,
+                modifier = Modifier.align(Alignment.Center),
+                enter = fadeIn(animationSpec = tween(180)),
+                exit = fadeOut(animationSpec = tween(120))
+            ) {
+                Row(
+                    modifier = Modifier
+                        .height(30.dp)
+                        .clip(RoundedCornerShape(999.dp))
+                        .background(Color(0x4A101114))
+                        .border(BorderStroke(1.dp, Color(0x18FFFFFF)), RoundedCornerShape(999.dp))
+                        .clickable { showSettingsMenu = true }
+                        .padding(start = 12.dp, end = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(6.dp)
+                            .clip(CircleShape)
+                            .background(if (connectionState == "Connected") Color(0xFF4CAF50) else Color(0xFFFFC107))
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = receiverConnectionMode.label,
+                        color = Color.White.copy(alpha = 0.72f),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1
+                    )
+                    Icon(
+                        imageVector = Icons.Default.KeyboardArrowDown,
+                        contentDescription = "Receiver settings",
+                        tint = Color.White.copy(alpha = 0.45f),
+                        modifier = Modifier.size(16.dp)
                     )
                 }
             }
@@ -1155,7 +1148,7 @@ private fun SettingsStatusPill(
 @Composable
 private fun SettingsSectionCard(
     title: String,
-    caption: String,
+    caption: String = "",
     content: @Composable ColumnScope.() -> Unit
 ) {
     Column(
@@ -1164,7 +1157,7 @@ private fun SettingsSectionCard(
             .clip(RoundedCornerShape(20.dp))
             .background(Color(0x261F2128))
             .border(BorderStroke(1.dp, Color(0x18FFFFFF)), RoundedCornerShape(20.dp))
-            .padding(14.dp)
+            .padding(12.dp)
     ) {
         Text(
             text = title,
@@ -1172,14 +1165,54 @@ private fun SettingsSectionCard(
             fontSize = 13.sp,
             fontWeight = FontWeight.ExtraBold
         )
-        Text(
-            text = caption,
-            color = Color(0x8CFFFFFF),
-            fontSize = 11.sp,
-            lineHeight = 15.sp,
-            modifier = Modifier.padding(top = 2.dp)
-        )
+        if (caption.isNotEmpty()) {
+            Text(
+                text = caption,
+                color = Color(0x8CFFFFFF),
+                fontSize = 11.sp,
+                lineHeight = 15.sp,
+                modifier = Modifier.padding(top = 2.dp)
+            )
+        }
         content()
+    }
+}
+
+@Composable
+private fun CompactSettingsChoiceTile(
+    title: String,
+    active: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(if (active) Color(0x303B5BFF) else Color(0x18101114))
+            .border(
+                BorderStroke(1.dp, if (active) Color(0x663B5BFF) else Color(0x12FFFFFF)),
+                RoundedCornerShape(12.dp)
+            )
+            .clickable(onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Center
+    ) {
+        Box(
+            modifier = Modifier
+                .size(6.dp)
+                .clip(CircleShape)
+                .background(if (active) Color(0xFFA4B4FF) else Color(0x4DFFFFFF))
+        )
+        Spacer(modifier = Modifier.width(6.dp))
+        Text(
+            text = title,
+            color = if (active) Color(0xFFDEE0FF) else Color.White.copy(alpha = 0.82f),
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
     }
 }
 
