@@ -2,8 +2,6 @@ package dev.captureport.app.receivers
 
 import android.content.Context
 import android.content.Intent
-import android.net.ConnectivityManager
-import android.net.NetworkCapabilities
 import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -17,6 +15,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.BorderStroke
@@ -26,7 +25,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
-import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.path
@@ -37,9 +36,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -54,6 +50,7 @@ import androidx.core.content.ContextCompat
 import androidx.camera.video.VideoRecordEvent
 import dev.captureport.app.CapturePortApp
 import dev.captureport.app.CameraCapturePolicy
+import dev.captureport.app.ReceiverConnectionMode
 import dev.captureport.app.camera.CameraController
 import dev.captureport.app.data.PairedDevice
 import dev.captureport.app.transfer.TransferService
@@ -80,39 +77,34 @@ fun ReceiversScreen(
     val pairedDevices by viewModel.pairedDevices.collectAsState()
     val selectedDevice by viewModel.selectedDevice.collectAsState()
 
-    var isVpnActive by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) {
-        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
-        if (cm != null) {
-            while (isActive) {
-                val activeNetwork = cm.activeNetwork
-                val capabilities = activeNetwork?.let { cm.getNetworkCapabilities(it) }
-                isVpnActive = capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true
-                delay(2000)
-            }
-        }
-    }
     val connectionState by (app.wsClient?.connectionState?.collectAsState() ?: remember { mutableStateOf("Disconnected") })
 
     val cameraController = remember { CameraController(context) }
     
     var isRecording by remember { mutableStateOf(false) }
     var recordingDuration by rememberSaveable { mutableStateOf(0) }
-    var showMenu by rememberSaveable { mutableStateOf(false) }
+    var showSettingsMenu by rememberSaveable { mutableStateOf(false) }
     var currentPolicy by remember { mutableStateOf(app.cameraCapturePolicy) }
+    var receiverConnectionMode by remember { mutableStateOf(app.receiverConnectionMode) }
     
     var deviceToDeleteId by rememberSaveable { mutableStateOf<String?>(null) }
     val deviceToDelete = pairedDevices.find { it.id == deviceToDeleteId }
 
     var deviceToEditId by rememberSaveable { mutableStateOf<String?>(null) }
     val deviceToEdit = pairedDevices.find { it.id == deviceToEditId }
+    var editAliasText by remember { mutableStateOf("") }
     var editHostText by remember { mutableStateOf("") }
     var editPortText by remember { mutableStateOf("") }
+    var editInternetHostText by remember { mutableStateOf("") }
+    var editInternetPortText by remember { mutableStateOf("") }
 
     LaunchedEffect(deviceToEdit) {
         if (deviceToEdit != null) {
-            editHostText = deviceToEdit.host
-            editPortText = deviceToEdit.port.toString()
+            editAliasText = deviceToEdit.alias.ifBlank { deviceToEdit.name }
+            editHostText = deviceToEdit.localHosts.ifBlank { deviceToEdit.host }
+            editPortText = (deviceToEdit.localPort.takeIf { it > 0 } ?: deviceToEdit.port).toString()
+            editInternetHostText = deviceToEdit.internetHost
+            editInternetPortText = deviceToEdit.internetPort.takeIf { it > 0 }?.toString().orEmpty()
         }
     }
 
@@ -223,86 +215,40 @@ fun ReceiversScreen(
                 )
         )
 
-        // Top HUD Area: Status Text & Dot + Dropdown Menu in a Glassmorphic Bar
+        // Top HUD Area
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .statusBarsPadding()
-                .padding(horizontal = 16.dp, vertical = 12.dp)
-                .background(Color(0x80101114), RoundedCornerShape(24.dp))
-                .border(1.dp, Color(0x12FFFFFF), RoundedCornerShape(24.dp))
-                .padding(horizontal = 16.dp, vertical = 8.dp),
+                .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                val statusColor = when {
-                    connectionState == "Connected" -> Color(0xFF4CAF50)
-                    connectionState.startsWith("Connecting") || connectionState.startsWith("Reconnecting") -> Color(0xFFFFC107)
-                    else -> Color(0xFFF44336)
-                }
-                Box(
-                    modifier = Modifier
-                        .size(8.dp)
-                        .clip(CircleShape)
-                        .background(statusColor)
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = connectionState,
-                    color = Color.White,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Bold
-                )
-                if (isVpnActive && connectionState != "Connected") {
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Icon(
-                        imageVector = Icons.Default.Warning,
-                        contentDescription = "Network notice",
-                        tint = Color(0xFFFF8A80),
-                        modifier = Modifier.size(14.dp)
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text(
-                        text = "Network assist active",
-                        color = Color(0xFFFFB4AB),
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-            }
+            Text(
+                text = "CapturePort",
+                color = Color.White,
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold
+            )
 
             Box {
-                TextButton(
-                    onClick = { showMenu = true },
-                    colors = ButtonDefaults.textButtonColors(contentColor = Color(0xFFDEE0FF)),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                IconButton(
+                    onClick = { showSettingsMenu = true },
+                    colors = IconButtonDefaults.iconButtonColors(containerColor = Color(0xD91F2128)),
                     modifier = Modifier
-                        .background(Color(0x1F2C2E35), RoundedCornerShape(12.dp))
-                        .border(1.dp, Color(0x0DFFFFFF), RoundedCornerShape(12.dp))
+                        .size(42.dp)
+                        .border(1.dp, Color(0xFF2C2E35), CircleShape)
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = currentPolicy.label,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Icon(
-                            imageVector = Icons.Default.KeyboardArrowDown,
-                            contentDescription = "Dropdown",
-                            tint = Color(0xFF8C8E96),
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
+                    Icon(
+                        imageVector = Icons.Default.Settings,
+                        contentDescription = "Receiver settings",
+                        tint = Color.White,
+                        modifier = Modifier.size(18.dp)
+                    )
                 }
                 DropdownMenu(
-                    expanded = showMenu,
-                    onDismissRequest = { showMenu = false },
+                    expanded = showSettingsMenu,
+                    onDismissRequest = { showSettingsMenu = false },
                     modifier = Modifier
                         .background(Color(0xFF1B1C20))
                         .border(1.dp, Color(0x1AFFFFFF), RoundedCornerShape(12.dp))
@@ -311,12 +257,37 @@ fun ReceiversScreen(
                         DropdownMenuItem(
                             text = { Text(policy.label, color = Color.White, fontSize = 13.sp) },
                             onClick = {
-                                app.cameraCapturePolicy = policy
+                                app.applyCameraCapturePolicy(policy)
                                 currentPolicy = policy
-                                showMenu = false
+                                showSettingsMenu = false
                             }
                         )
                     }
+                    HorizontalDivider(color = Color(0x1AFFFFFF))
+                    ReceiverConnectionMode.values().forEach { mode ->
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    mode.label,
+                                    color = if (receiverConnectionMode == mode) Color(0xFFA4B4FF) else Color.White,
+                                    fontSize = 13.sp
+                                )
+                            },
+                            onClick = {
+                                app.applyReceiverConnectionMode(mode)
+                                receiverConnectionMode = mode
+                                showSettingsMenu = false
+                            }
+                        )
+                    }
+                    HorizontalDivider(color = Color(0x1AFFFFFF))
+                    DropdownMenuItem(
+                        text = { Text("Add & Pair a New PC", color = Color.White, fontSize = 13.sp) },
+                        onClick = {
+                            showSettingsMenu = false
+                            onNavigateToPairing()
+                        }
+                    )
                 }
             }
         }
@@ -361,22 +332,6 @@ fun ReceiversScreen(
                     }
                 }
                 Spacer(modifier = Modifier.weight(1f))
-                if (pairedDevices.isNotEmpty()) {
-                    IconButton(
-                        onClick = onNavigateToPairing,
-                        colors = IconButtonDefaults.iconButtonColors(containerColor = Color(0xD91F2128)),
-                        modifier = Modifier
-                            .size(40.dp)
-                            .border(1.dp, Color(0xFF2C2E35), CircleShape)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Add,
-                            contentDescription = "Pair Receiver",
-                            tint = Color.White,
-                            modifier = Modifier.size(14.dp)
-                        )
-                    }
-                }
             }
 
             if (pairedDevices.isEmpty()) {
@@ -420,8 +375,10 @@ fun ReceiversScreen(
                     }
                 }
             } else {
+                val receiverRowState = rememberLazyListState()
                 Box(modifier = Modifier.fillMaxWidth()) {
                     LazyRow(
+                        state = receiverRowState,
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         contentPadding = PaddingValues(end = 8.dp),
                         modifier = Modifier.fillMaxWidth()
@@ -430,10 +387,12 @@ fun ReceiversScreen(
                         val isSelected = selectedDevice?.id == device.id
                         val borderCol = if (isSelected) Color(0xFF3B5BFF) else Color(0xFF2C2E35)
                         val bgCol = if (isSelected) Color(0xE61F2128) else Color(0x991F2128)
-                        val isCollapsed = collapsedDevices[device.id] ?: false
+                        val isCollapsed = collapsedDevices[device.id] ?: true
+                        val displayName = device.alias.ifBlank { device.name }
 
                         Row(
                             modifier = Modifier
+                                .width(if (isCollapsed) 188.dp else 252.dp)
                                 .clip(RoundedCornerShape(16.dp))
                                 .background(bgCol)
                                 .border(BorderStroke(1.dp, borderCol), RoundedCornerShape(16.dp))
@@ -458,10 +417,12 @@ fun ReceiversScreen(
                                         Spacer(modifier = Modifier.width(6.dp))
                                     }
                                     Text(
-                                        text = device.name,
+                                        text = displayName,
                                         color = Color.White,
                                         fontSize = 14.sp,
-                                        fontWeight = FontWeight.Bold
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 1,
+                                        modifier = Modifier.weight(1f, fill = false)
                                     )
                                     Spacer(modifier = Modifier.width(8.dp))
                                     IconButton(
@@ -478,7 +439,7 @@ fun ReceiversScreen(
                                 }
                                 if (!isCollapsed) {
                                     Spacer(modifier = Modifier.height(6.dp))
-                                    val hosts = device.host.split(',').map { it.trim() }.filter { it.isNotEmpty() }
+                                    val hosts = device.localHosts.ifBlank { device.host }.split(',').map { it.trim() }.filter { it.isNotEmpty() }
                                     val firstHost = hosts.firstOrNull() ?: device.host
                                     val moreCount = (hosts.size - 1).coerceAtLeast(0)
                                     val hostText = if (moreCount > 0) "$firstHost +$moreCount" else firstHost
@@ -490,6 +451,7 @@ fun ReceiversScreen(
                                     )
                                     Spacer(modifier = Modifier.height(10.dp))
                                     Row(
+                                        modifier = Modifier.fillMaxWidth(),
                                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                                     ) {
                                         IconButton(
@@ -506,6 +468,7 @@ fun ReceiversScreen(
                                                 modifier = Modifier.size(14.dp)
                                             )
                                         }
+                                        Spacer(modifier = Modifier.weight(1f))
                                         IconButton(
                                             onClick = { deviceToDeleteId = device.id },
                                             modifier = Modifier
@@ -527,22 +490,15 @@ fun ReceiversScreen(
                     }
                 }
                     // Right-edge "pocket" fade — suggests the row continues off-screen
-                    Box(
-                        modifier = Modifier
-                            .matchParentSize()
-                            .drawBehind {
-                                val fadeWidth = 28.dp.toPx()
-                                drawRect(
-                                    brush = Brush.horizontalGradient(
-                                        colors = listOf(Color.Transparent, Color(0x99000000)),
-                                        startX = size.width - fadeWidth,
-                                        endX = size.width
-                                    ),
-                                    topLeft = Offset(size.width - fadeWidth, 0f),
-                                    size = Size(fadeWidth, size.height)
-                                )
-                            }
-                    )
+                    if (receiverRowState.canScrollForward) {
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.CenterEnd)
+                                .width(2.dp)
+                                .height(64.dp)
+                                .background(Color(0x663B5BFF), RoundedCornerShape(2.dp))
+                        )
+                    }
                 }
             }
 
@@ -760,17 +716,20 @@ fun ReceiversScreen(
         )
     }
 
-    // Edit IP Dialog
+    // Edit receiver dialog
     if (deviceToEdit != null) {
         val isHostValid = editHostText.isNotBlank()
         val portInt = editPortText.toIntOrNull()
         val isPortValid = portInt != null && portInt in 1..65535
+        val internetPortInt = editInternetPortText.toIntOrNull()
+        val isInternetPortValid = editInternetHostText.isBlank() ||
+            (internetPortInt != null && internetPortInt in 1..65535)
 
         AlertDialog(
             onDismissRequest = { deviceToEditId = null },
             title = {
                 Text(
-                    text = "Manual IP Connect",
+                    text = "PC Receiver",
                     color = Color.White,
                     fontWeight = FontWeight.Bold,
                     fontSize = 18.sp
@@ -779,16 +738,31 @@ fun ReceiversScreen(
             text = {
                 Column {
                     Text(
-                        text = "Enter the new IP address(es) and port of your PC receiver.",
+                        text = "Name this PC and adjust its local or internet endpoints.",
                         color = Color(0xFF8E9099),
                         fontSize = 13.sp,
                         lineHeight = 18.sp,
                         modifier = Modifier.padding(bottom = 16.dp)
                     )
                     OutlinedTextField(
+                        value = editAliasText,
+                        onValueChange = { editAliasText = it },
+                        label = { Text("Computer name") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = Color(0xFF3B5BFF),
+                            unfocusedBorderColor = Color(0xFF2C2E35),
+                            focusedLabelColor = Color(0xFF3B5BFF),
+                            unfocusedLabelColor = Color(0xFF8E9099)
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedTextField(
                         value = editHostText,
                         onValueChange = { editHostText = it },
-                        label = { Text("IP Address(es) (comma-separated)") },
+                        label = { Text("Local address(es)") },
                         singleLine = true,
                         isError = !isHostValid,
                         shape = RoundedCornerShape(12.dp),
@@ -809,7 +783,7 @@ fun ReceiversScreen(
                     OutlinedTextField(
                         value = editPortText,
                         onValueChange = { editPortText = it },
-                        label = { Text("Port") },
+                        label = { Text("Local port") },
                         singleLine = true,
                         isError = !isPortValid,
                         shape = RoundedCornerShape(12.dp),
@@ -826,20 +800,62 @@ fun ReceiversScreen(
                         ),
                         modifier = Modifier.fillMaxWidth()
                     )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = editInternetHostText,
+                        onValueChange = { editInternetHostText = it },
+                        label = { Text("Internet host or DDNS") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = Color(0xFF3B5BFF),
+                            unfocusedBorderColor = Color(0xFF2C2E35),
+                            focusedLabelColor = Color(0xFF3B5BFF),
+                            unfocusedLabelColor = Color(0xFF8E9099)
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = editInternetPortText,
+                        onValueChange = { editInternetPortText = it },
+                        label = { Text("Internet port") },
+                        singleLine = true,
+                        isError = !isInternetPortValid,
+                        shape = RoundedCornerShape(12.dp),
+                        supportingText = {
+                            if (!isInternetPortValid) {
+                                Text("Internet port must be a number between 1 and 65535", color = MaterialTheme.colorScheme.error)
+                            }
+                        },
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = Color(0xFF3B5BFF),
+                            unfocusedBorderColor = Color(0xFF2C2E35),
+                            focusedLabelColor = Color(0xFF3B5BFF),
+                            unfocusedLabelColor = Color(0xFF8E9099)
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
                 }
             },
             confirmButton = {
                 Button(
                     onClick = {
-                        if (isHostValid && isPortValid) {
+                        if (isHostValid && isPortValid && isInternetPortValid) {
                             val portVal = portInt!!
                             scope.launch(Dispatchers.IO) {
-                                app.pairedDevicesRepository.updateLastSeen(deviceToEdit.id, editHostText, portVal)
+                                app.pairedDevicesRepository.renameDeviceAlias(deviceToEdit.id, editAliasText)
+                                app.pairedDevicesRepository.updateLocalEndpoint(deviceToEdit.id, editHostText, portVal)
+                                app.pairedDevicesRepository.updateInternetEndpoint(
+                                    deviceToEdit.id,
+                                    editInternetHostText,
+                                    internetPortInt ?: 0,
+                                )
                             }
                             deviceToEditId = null
                         }
                     },
-                    enabled = isHostValid && isPortValid,
+                    enabled = isHostValid && isPortValid && isInternetPortValid,
                     colors = ButtonDefaults.buttonColors(
                         containerColor = Color(0xFF3B5BFF),
                         disabledContainerColor = Color(0x303B5BFF)
@@ -847,8 +863,8 @@ fun ReceiversScreen(
                     shape = RoundedCornerShape(10.dp)
                 ) {
                     Text(
-                        text = "Save & Connect",
-                        color = if (isHostValid && isPortValid) Color.White else Color(0x80FFFFFF),
+                        text = "Save",
+                        color = if (isHostValid && isPortValid && isInternetPortValid) Color.White else Color(0x80FFFFFF),
                         fontWeight = FontWeight.Bold
                     )
                 }

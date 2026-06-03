@@ -1,118 +1,22 @@
-pub(crate) const VPN_NAME_NEEDLES: &[&str] = &[
-    "tun",
-    "tap",
-    "vpn",
-    "wg",
-    "tailscale",
-    "zerotier",
-    "ppp",
-    "utun",
-    "nordlynx",
-    "warp",
-    "secure",
-];
+use base64::prelude::*;
 
-/// Checks if the active default route goes through a VPN or virtual tunnel interface.
-pub(crate) fn is_vpn_default_route() -> bool {
-    let addrs = match if_addrs::get_if_addrs() {
-        Ok(v) => v,
-        Err(_) => return false,
-    };
-    addrs.iter().any(|iface| {
-        if iface.is_loopback() {
-            return false;
-        }
-        let name = iface.name.to_ascii_lowercase();
-        let looks_like_vpn =
-            iface.is_p2p || VPN_NAME_NEEDLES.iter().any(|needle| name.contains(needle));
-
-        looks_like_vpn && is_default_route_for(&iface.name, iface.index)
-    })
-}
-
-#[cfg(target_os = "windows")]
-fn is_default_route_for(_ifname: &str, ifindex: Option<u32>) -> bool {
-    if let Some(target_idx) = ifindex {
-        use windows_sys::Win32::NetworkManagement::IpHelper::GetBestInterface;
-        let dest_addr: u32 = 0x08080808; // 8.8.8.8
-        let mut best_if_index: u32 = 0;
-        let res = unsafe { GetBestInterface(dest_addr, &mut best_if_index) };
-        if res == 0 {
-            return target_idx == best_if_index;
-        }
-    }
-    false
-}
-
-#[cfg(any(target_os = "linux", target_os = "android"))]
-fn is_default_route_for(ifname: &str, _ifindex: Option<u32>) -> bool {
-    if let Ok(content) = std::fs::read_to_string("/proc/net/route") {
-        for line in content.lines() {
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if parts.len() > 3 {
-                let iface = parts[0];
-                let dest = parts[1];
-                // Destination "00000000" represents the default route (0.0.0.0).
-                if dest == "00000000" && iface == ifname {
-                    return true;
-                }
-            }
-        }
-    }
-    false
-}
-
-#[cfg(target_os = "macos")]
-fn is_default_route_for(ifname: &str, _ifindex: Option<u32>) -> bool {
-    let out = std::process::Command::new("route")
-        .args(["-n", "get", "default"])
-        .output()
-        .ok();
-    if let Some(o) = out {
-        let s = String::from_utf8_lossy(&o.stdout);
-        for line in s.lines() {
-            let line_trimmed = line.trim();
-            if line_trimmed.starts_with("interface:") {
-                let parts: Vec<&str> = line_trimmed.split_whitespace().collect();
-                if parts.len() > 1 && parts[1] == ifname {
-                    return true;
-                }
-            }
-        }
-    }
-    false
-}
-
-#[cfg(not(any(
-    target_os = "windows",
-    target_os = "linux",
-    target_os = "android",
-    target_os = "macos"
-)))]
-fn is_default_route_for(_ifname: &str, _ifindex: Option<u32>) -> bool {
-    false
-}
-
-pub(crate) fn get_vpn_interfaces() -> Vec<(String, u32)> {
-    let mut vpns = Vec::new();
-    if let Ok(addrs) = if_addrs::get_if_addrs() {
-        for iface in addrs {
-            if iface.is_loopback() {
-                continue;
-            }
-            let name = iface.name.to_ascii_lowercase();
-            let looks_like_vpn =
-                iface.is_p2p || VPN_NAME_NEEDLES.iter().any(|needle| name.contains(needle));
-            if looks_like_vpn {
-                if let Some(idx) = iface.index {
-                    vpns.push((iface.name.clone(), idx));
-                }
-            }
-        }
-    }
-    vpns.sort_by_key(|a| a.1);
-    vpns.dedup_by(|a, b| a.1 == b.1);
-    vpns
+fn is_host_only_or_virtual_name(name: &str) -> bool {
+    let lowered = name.to_ascii_lowercase();
+    [
+        "loopback",
+        "host-only",
+        "vethernet",
+        "hyper-v",
+        "docker",
+        "wsl",
+        "podman",
+        "vmware",
+        "vmnet",
+        "virtualbox",
+        "bridge",
+    ]
+    .iter()
+    .any(|needle| lowered.contains(needle))
 }
 
 pub(crate) fn is_usable_ipv4(ip: std::net::Ipv4Addr) -> bool {
@@ -145,34 +49,11 @@ pub(crate) fn is_usable_ipv4(ip: std::net::Ipv4Addr) -> bool {
     true
 }
 
-pub(crate) fn get_physical_lan_interfaces() -> Vec<(std::net::Ipv4Addr, Option<std::net::Ipv4Addr>)>
-{
+pub(crate) fn get_lan_interfaces() -> Vec<(std::net::Ipv4Addr, Option<std::net::Ipv4Addr>)> {
     let mut interfaces = Vec::new();
     if let Ok(addrs) = if_addrs::get_if_addrs() {
         for iface in addrs {
-            if iface.is_loopback() {
-                continue;
-            }
-            let name = iface.name.to_ascii_lowercase();
-            let is_vpn_or_virtual = iface.is_p2p
-                || VPN_NAME_NEEDLES.iter().any(|needle| name.contains(needle))
-                || [
-                    "loopback",
-                    "host-only",
-                    "vethernet",
-                    "hyper-v",
-                    "docker",
-                    "wsl",
-                    "podman",
-                    "vmware",
-                    "vmnet",
-                    "virtualbox",
-                    "bridge",
-                ]
-                .iter()
-                .any(|needle| name.contains(needle));
-
-            if is_vpn_or_virtual {
+            if iface.is_loopback() || iface.is_p2p || is_host_only_or_virtual_name(&iface.name) {
                 continue;
             }
 
@@ -186,8 +67,7 @@ pub(crate) fn get_physical_lan_interfaces() -> Vec<(std::net::Ipv4Addr, Option<s
     interfaces
 }
 
-pub fn start_udp_broadcast(ws_port: u16, pc_public_key: [u8; 32], state: crate::state::AppState) {
-    let weak_inner = std::sync::Arc::downgrade(&state.inner);
+pub fn start_udp_broadcast(ws_port: u16, pc_public_key: [u8; 32]) {
     tauri::async_runtime::spawn(async move {
         let pc_pub_b64 = BASE64_URL_SAFE_NO_PAD.encode(pc_public_key);
         use ring::digest::{digest, SHA256};
@@ -213,27 +93,13 @@ pub fn start_udp_broadcast(ws_port: u16, pc_public_key: [u8; 32], state: crate::
         loop {
             interval.tick().await;
 
-            let inner_arc = match weak_inner.upgrade() {
-                Some(arc) => arc,
-                None => {
-                    tracing::info!("AppState dropped. Stopping UDP broadcast.");
-                    break;
-                }
-            };
-
             if ticks.is_multiple_of(5)
                 || cached_hosts_str.is_empty()
                 || cached_device_name.is_empty()
             {
                 let settings = crate::AppSettings::load();
-                cached_device_name = settings.device_name;
-
-                let tailscale_dns = {
-                    let inner = inner_arc.lock().unwrap();
-                    inner.tailscale_dns_name.clone()
-                };
-                let hosts = crate::pairing::qr::QrGenerator::get_pairing_hosts(tailscale_dns);
-                cached_hosts_str = hosts.join(",");
+                cached_device_name = settings.device_name.clone();
+                cached_hosts_str = crate::local_pairing_hosts(&settings).join(",");
             }
             ticks = ticks.wrapping_add(1);
 
@@ -248,9 +114,8 @@ pub fn start_udp_broadcast(ws_port: u16, pc_public_key: [u8; 32], state: crate::
             let payload_str = payload.to_string();
             let payload_bytes = payload_str.as_bytes();
 
-            let physical_interfaces = get_physical_lan_interfaces();
-            if physical_interfaces.is_empty() {
-                // Fallback to binding to 0.0.0.0
+            let interfaces = get_lan_interfaces();
+            if interfaces.is_empty() {
                 if let Ok(socket) = std::net::UdpSocket::bind("0.0.0.0:0") {
                     if socket.set_broadcast(true).is_ok() {
                         if let Err(e) = socket.send_to(payload_bytes, "255.255.255.255:5354") {
@@ -259,15 +124,13 @@ pub fn start_udp_broadcast(ws_port: u16, pc_public_key: [u8; 32], state: crate::
                     }
                 }
             } else {
-                for (ip, broadcast_ip) in physical_interfaces {
+                for (ip, broadcast_ip) in interfaces {
                     if let Ok(socket) = std::net::UdpSocket::bind(std::net::SocketAddr::new(
                         std::net::IpAddr::V4(ip),
                         0,
                     )) {
                         if socket.set_broadcast(true).is_ok() {
-                            // Send general broadcast
                             let _ = socket.send_to(payload_bytes, "255.255.255.255:5354");
-                            // Also send to interface's subnet broadcast if available
                             if let Some(bcast) = broadcast_ip {
                                 let _ = socket.send_to(
                                     payload_bytes,
@@ -282,44 +145,16 @@ pub fn start_udp_broadcast(ws_port: u16, pc_public_key: [u8; 32], state: crate::
     });
 }
 
-use base64::prelude::*;
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_vpn_name_detection() {
-        let test_cases = [
-            ("tun0", true),
-            ("wg0", true),
-            ("tailscale0", true),
-            ("utun3", true),
-            ("ppp0", true),
-            ("nordlynx", true),
-            ("warp-interface", true),
-            ("zerotier_one", true),
-            ("tap-windows-adapter", true),
-            ("eth0", false),
-            ("wlan0", false),
-            ("Wi-Fi", false),
-            ("Ethernet 1", false),
-        ];
-
-        for (name, expected) in test_cases {
-            let matches = VPN_NAME_NEEDLES
-                .iter()
-                .any(|needle| name.to_ascii_lowercase().contains(needle));
-            assert_eq!(matches, expected, "Failed for name: {}", name);
-        }
-    }
 
     #[test]
     fn test_usable_ipv4() {
         assert!(is_usable_ipv4(std::net::Ipv4Addr::new(192, 168, 1, 100)));
         assert!(is_usable_ipv4(std::net::Ipv4Addr::new(10, 0, 0, 1)));
         assert!(!is_usable_ipv4(std::net::Ipv4Addr::new(127, 0, 0, 1)));
-        assert!(!is_usable_ipv4(std::net::Ipv4Addr::new(100, 64, 0, 1))); // CGNAT
-        assert!(!is_usable_ipv4(std::net::Ipv4Addr::new(169, 254, 1, 1))); // Link local
+        assert!(!is_usable_ipv4(std::net::Ipv4Addr::new(100, 64, 0, 1)));
+        assert!(!is_usable_ipv4(std::net::Ipv4Addr::new(169, 254, 1, 1)));
     }
 }

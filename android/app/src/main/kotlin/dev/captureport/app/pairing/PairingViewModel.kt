@@ -1,8 +1,5 @@
 package dev.captureport.app.pairing
 
-import android.content.Context
-import android.net.ConnectivityManager
-import android.net.NetworkCapabilities
 import android.os.Build
 import android.util.Base64
 import dev.captureport.app.network.NetworkHelper
@@ -14,6 +11,7 @@ import dev.captureport.app.data.PairedDevice
 import dev.captureport.app.data.datastore.PairedDevicesRepository
 import dev.captureport.app.network.EnvelopeCodec
 import dev.captureport.app.network.EnvelopeCodec.Envelope
+import dev.captureport.app.network.EndpointTarget
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -42,8 +40,11 @@ class PairingViewModel(
 ) : ViewModel() {
 
     private data class PairingRequest(
-        val hosts: List<String>,
-        val port: Int,
+        val localHosts: List<String>,
+        val localPort: Int,
+        val internetHost: String?,
+        val internetPort: Int?,
+        val targets: List<EndpointTarget>,
         val pcPublicKeyB64: String,
         val pcName: String,
         val pcOs: String,
@@ -109,9 +110,9 @@ class PairingViewModel(
             if (endBracket > 0) {
                 val inner = host.substring(1, endBracket)
                 val portStr = host.substring(endBracket + 1).removePrefix(":")
-                inner to (portStr.toIntOrNull() ?: req.port)
+                inner to (portStr.toIntOrNull() ?: req.localPort)
             } else {
-                host to req.port
+                host to req.localPort
             }
         } else {
             val lastColon = host.lastIndexOf(':')
@@ -119,11 +120,15 @@ class PairingViewModel(
             if (parsedPort != null && host.indexOf(':') == lastColon) {
                 host.substring(0, lastColon) to parsedPort
             } else {
-                host to req.port
+                host to req.localPort
             }
         }
 
-        val newRequest = req.copy(hosts = listOf(targetHost), port = targetPort)
+        val newRequest = req.copy(
+            localHosts = listOf(targetHost),
+            localPort = targetPort,
+            targets = listOf(EndpointTarget(targetHost, targetPort))
+        )
         val attemptId = nextAttemptId()
         pairingSocket?.cancel()
         pairingSocket = null
@@ -148,16 +153,22 @@ class PairingViewModel(
 
     // Starts challenge-response handshake sequence from QR parameters
     fun startPairing(
-        hosts: List<String>,
-        port: Int,
+        localHosts: List<String>,
+        localPort: Int,
+        internetHost: String?,
+        internetPort: Int?,
+        endpointMode: String,
         pcPublicKeyB64: String,
         pcName: String,
         pcOs: String,
         pcNonceB64: String,
         pcSigB64: String
     ) {
-        val candidateHosts = hosts.map(String::trim).filter(String::isNotBlank).distinct()
-        if (candidateHosts.isEmpty() || port !in 1..65535 || pcPublicKeyB64.isBlank() || pcNonceB64.isBlank() || pcSigB64.isBlank()) {
+        val candidateLocalHosts = localHosts.map(String::trim).filter(String::isNotBlank).distinct()
+        val cleanInternetHost = internetHost?.trim()?.takeIf { it.isNotEmpty() }
+        val cleanInternetPort = internetPort?.takeIf { it in 1..65535 }
+        val targets = buildPairingTargets(candidateLocalHosts, localPort, cleanInternetHost, cleanInternetPort, endpointMode)
+        if (targets.isEmpty() || localPort !in 1..65535 || pcPublicKeyB64.isBlank() || pcNonceB64.isBlank() || pcSigB64.isBlank()) {
             showError("Invalid pairing QR. Regenerate the QR code on your PC and scan again.")
             return
         }
@@ -168,8 +179,11 @@ class PairingViewModel(
         _uiState.value = PairingState.Connecting
 
         val pairingRequest = PairingRequest(
-            hosts = candidateHosts,
-            port = port,
+            localHosts = candidateLocalHosts,
+            localPort = localPort,
+            internetHost = cleanInternetHost,
+            internetPort = cleanInternetPort,
+            targets = targets,
             pcPublicKeyB64 = pcPublicKeyB64,
             pcName = pcName,
             pcOs = pcOs,
@@ -195,6 +209,22 @@ class PairingViewModel(
         }
     }
 
+    private fun buildPairingTargets(
+        localHosts: List<String>,
+        localPort: Int,
+        internetHost: String?,
+        internetPort: Int?,
+        endpointMode: String,
+    ): List<EndpointTarget> {
+        val localTargets = localHosts.map { EndpointTarget(it, localPort) }
+        val internetTarget = internetHost?.let { EndpointTarget(it, internetPort ?: localPort) }
+        return when (endpointMode) {
+            "internet-only" -> listOfNotNull(internetTarget)
+            "local-then-internet" -> localTargets + listOfNotNull(internetTarget)
+            else -> localTargets
+        }.distinct()
+    }
+
     private fun attemptPairing(
         requestData: PairingRequest,
         phonePubKeyB64: String,
@@ -205,21 +235,23 @@ class PairingViewModel(
             return
         }
 
-        val host = requestData.hosts.getOrNull(hostIndex)
-        if (host == null) {
+        val target = requestData.targets.getOrNull(hostIndex)
+        if (target == null) {
             _uiState.value = PairingState.Error(
-                "Couldn't reach the PC on any advertised network address. Make sure both devices are on the same network and that your OS firewall allows CapturePort on port ${requestData.port}."
+                "Couldn't reach the PC on any advertised network address. Make sure both devices are on the same network or that your internet endpoint is reachable."
             )
             return
         }
+        val host = target.host
+        val port = target.port
 
         val socketRequest = try {
             Request.Builder()
-                .url("ws://$host:${requestData.port}/ws")
+                .url("ws://$host:$port/ws")
                 .build()
         } catch (e: IllegalArgumentException) {
             Log.e("PairingViewModel", "Invalid pairing URL: ${e.message}")
-            if (hostIndex + 1 < requestData.hosts.size) {
+            if (hostIndex + 1 < requestData.targets.size) {
                 attemptPairing(requestData, phonePubKeyB64, attemptId, hostIndex + 1)
             } else {
                 _uiState.value = PairingState.Error("Invalid pairing address. Regenerate the QR code on your PC and scan again.")
@@ -322,11 +354,19 @@ class PairingViewModel(
                                 .setId(deviceId)
                                 .setName(requestData.pcName)
                                 .setOs(requestData.pcOs)
-                                .setHost(requestData.hosts.joinToString(","))
-                                .setPort(requestData.port)
+                                .setHost(requestData.localHosts.joinToString(","))
+                                .setPort(requestData.localPort)
+                                .setLocalHosts(requestData.localHosts.joinToString(","))
+                                .setLocalPort(requestData.localPort)
                                 .setToken(token)
                                 .setPublicKey(com.google.protobuf.ByteString.copyFrom(pcPublicKeyBytes))
                                 .setLastSeenMs(System.currentTimeMillis())
+                                .build()
+                                .toBuilder()
+                                .apply {
+                                    requestData.internetHost?.let { setInternetHost(it) }
+                                    requestData.internetPort?.let { setInternetPort(it) }
+                                }
                                 .build()
 
                             viewModelScope.launch(Dispatchers.IO) {
@@ -355,7 +395,7 @@ class PairingViewModel(
                 }
 
                 pairingSocket = null
-                if (!handshakeStarted && hostIndex + 1 < requestData.hosts.size) {
+                if (!handshakeStarted && hostIndex + 1 < requestData.targets.size) {
                     attemptPairing(requestData, phonePubKeyB64, attemptId, hostIndex + 1)
                     return
                 }
@@ -364,9 +404,9 @@ class PairingViewModel(
                     return
                 }
 
-                val attemptedHosts = requestData.hosts.take(hostIndex + 1).joinToString(", ")
-                val message = if (!handshakeStarted && requestData.hosts.size > 1) {
-                    "Couldn't reach the PC on the advertised network addresses: $attemptedHosts. Make sure both devices are on the same network and that your OS firewall allows CapturePort on port ${requestData.port}."
+                val attemptedHosts = requestData.targets.take(hostIndex + 1).joinToString(", ") { "${it.host}:${it.port}" }
+                val message = if (!handshakeStarted && requestData.targets.size > 1) {
+                    "Couldn't reach the PC on the advertised network addresses: $attemptedHosts. Make sure local network access or the internet endpoint is available."
                 } else {
                     "Network failure connecting: ${t.message ?: "unknown error"}"
                 }

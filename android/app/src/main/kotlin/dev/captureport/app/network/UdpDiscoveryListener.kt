@@ -3,7 +3,6 @@ package dev.captureport.app.network
 import android.content.Context
 import android.net.ConnectivityManager
 import android.net.Network
-import android.net.NetworkCapabilities
 import android.net.wifi.WifiManager
 import android.util.Base64
 import android.util.Log
@@ -95,26 +94,6 @@ class UdpDiscoveryListener(
                 }
                 socket = newSocket
 
-                // Check VPN state and bind socket if VPN is active
-                val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
-                val activeNetwork = cm?.activeNetwork
-                val caps = activeNetwork?.let { cm.getNetworkCapabilities(it) }
-                val isVpnActive = caps?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true
-
-                if (isVpnActive) {
-                    val nonVpnNetwork = NetworkHelper.getNonVpnNetwork(context)
-                    if (nonVpnNetwork != null) {
-                        try {
-                            nonVpnNetwork.bindSocket(newSocket)
-                            Log.i("UdpDiscoveryListener", "Bound UDP socket to physical network to bypass VPN: $nonVpnNetwork")
-                        } catch (e: Exception) {
-                            Log.e("UdpDiscoveryListener", "Failed to bind UDP socket to physical network: ${e.message}")
-                        }
-                    } else {
-                        Log.w("UdpDiscoveryListener", "VPN is active but no physical non-VPN network was found")
-                    }
-                }
-
                 newSocket.bind(java.net.InetSocketAddress(5354))
 
                 val buffer = ByteArray(4096)
@@ -155,7 +134,7 @@ class UdpDiscoveryListener(
                                     if (device.host != hosts || device.port != port) {
                                         Log.i("UdpDiscoveryListener", "Updating paired device ${device.name} address to: $hosts:$port")
                                     }
-                                    repository.updateLastSeen(device.id, hosts, port)
+                                    repository.updateLocalEndpoint(device.id, hosts, port)
                                 }
                             }
                         }

@@ -62,38 +62,37 @@ function assertDeclaration(declarations, property, expected, message) {
 const compactMedia = blockAfter("@media (max-width: 860px)");
 const narrowMedia = blockAfter("@media (max-width: 700px)");
 
+const pairingMarkup = source.slice(
+  source.indexOf('{:else if windowLabel === "pairing"}'),
+  source.indexOf('{:else if windowLabel === "settings"}')
+);
+const settingsMarkup = source.slice(source.indexOf('{:else if windowLabel === "settings"}'));
+
+assert(
+  pairingMarkup.includes("Local only") &&
+    pairingMarkup.includes("Local + Internet") &&
+    pairingMarkup.includes("Internet only"),
+  "Pairing tab must expose explicit QR endpoint mode controls."
+);
+assert(
+  !pairingMarkup.includes("Paired Devices"),
+  "Pairing tab should only contain QR pairing, not paired device management."
+);
+assert(
+  settingsMarkup.includes("Paired Devices") && settingsMarkup.includes("settings-tabs"),
+  "Paired device management must live in the Settings tab container."
+);
+assert(
+  !source.includes("legacyRouteActive") && !source.includes("route-warning-text"),
+  "PC UI must not expose legacy route-specific state or warning copy."
+);
+
 const pairingContent = declarationsFor(".pairing-content", compactMedia);
 assertDeclaration(
   pairingContent,
   "max-height",
   "calc(100vh - 48px)",
   "Pairing content must be height-constrained for the default 800x600 Tauri window."
-);
-
-const pairingColumns = declarationsFor(".pairing-columns", compactMedia);
-assertDeclaration(
-  pairingColumns,
-  "display",
-  "grid",
-  "Default-window pairing layout should switch to a compact grid instead of overflowing two wide cards."
-);
-assertDeclaration(
-  pairingColumns,
-  "grid-template-columns",
-  "minmax(250px, 1.05fr) minmax(220px, 0.95fr)",
-  "Default-window pairing columns should preserve the two-panel compact layout."
-);
-assertDeclaration(
-  pairingColumns,
-  "height",
-  "100%",
-  "Default-window pairing columns should fill the available height instead of growing past the window."
-);
-assertDeclaration(
-  pairingColumns,
-  "max-width",
-  "none",
-  "Default-window pairing columns should not inherit the wider desktop max width."
 );
 
 const pairingPanel = declarationsFor(".pairing-panel", compactMedia);
@@ -124,4 +123,12 @@ assertDeclaration(
   "grid-template-columns",
   "1fr",
   "Very narrow pairing layout should collapse to one column."
+);
+
+const settingsDeviceList = declarationsFor(".settings-device-list");
+assertDeclaration(
+  settingsDeviceList,
+  "overflow-y",
+  "auto",
+  "Only the Settings paired-device list should scroll when many devices are present."
 );

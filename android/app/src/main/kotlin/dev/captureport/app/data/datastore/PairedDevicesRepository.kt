@@ -35,7 +35,17 @@ class PairedDevicesRepository(
             // Remove previous instances if duplicate
             val existingIndex = builder.devicesList.indexOfFirst { it.id == device.id }
             if (existingIndex >= 0) {
-                builder.setDevices(existingIndex, device)
+                val existing = builder.getDevices(existingIndex)
+                val updated = device.toBuilder().apply {
+                    if (alias.isBlank() && existing.alias.isNotBlank()) {
+                        alias = existing.alias
+                    }
+                    if (internetHost.isBlank() && existing.internetHost.isNotBlank()) {
+                        internetHost = existing.internetHost
+                        internetPort = existing.internetPort
+                    }
+                }.build()
+                builder.setDevices(existingIndex, updated)
             } else {
                 builder.addDevices(device)
             }
@@ -46,14 +56,49 @@ class PairedDevicesRepository(
 
     // Update the last seen timestamp of a device when it replies to broadcast
     suspend fun updateLastSeen(deviceId: String, host: String, port: Int) {
+        updateLocalEndpoint(deviceId, host, port)
+    }
+
+    suspend fun updateLocalEndpoint(deviceId: String, hosts: String, port: Int) {
         dataStore.updateData { current ->
             val builder = current.toBuilder()
             val index = builder.devicesList.indexOfFirst { it.id == deviceId }
             if (index >= 0) {
                 val updated = builder.getDevices(index).toBuilder()
                     .setLastSeenMs(System.currentTimeMillis())
-                    .setHost(host)
+                    .setHost(hosts)
                     .setPort(port)
+                    .setLocalHosts(hosts)
+                    .setLocalPort(port)
+                    .build()
+                builder.setDevices(index, updated)
+            }
+            builder.build()
+        }
+    }
+
+    suspend fun updateInternetEndpoint(deviceId: String, host: String, port: Int) {
+        dataStore.updateData { current ->
+            val builder = current.toBuilder()
+            val index = builder.devicesList.indexOfFirst { it.id == deviceId }
+            if (index >= 0) {
+                val updated = builder.getDevices(index).toBuilder()
+                    .setInternetHost(host.trim())
+                    .setInternetPort(port)
+                    .build()
+                builder.setDevices(index, updated)
+            }
+            builder.build()
+        }
+    }
+
+    suspend fun renameDeviceAlias(deviceId: String, alias: String) {
+        dataStore.updateData { current ->
+            val builder = current.toBuilder()
+            val index = builder.devicesList.indexOfFirst { it.id == deviceId }
+            if (index >= 0) {
+                val updated = builder.getDevices(index).toBuilder()
+                    .setAlias(alias.trim())
                     .build()
                 builder.setDevices(index, updated)
             }

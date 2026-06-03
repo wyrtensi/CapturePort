@@ -2,8 +2,6 @@ package dev.captureport.app.network
 
 import android.content.Context
 import android.content.Intent
-import android.net.ConnectivityManager
-import android.net.NetworkCapabilities
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.Base64
@@ -11,6 +9,7 @@ import android.util.Log
 import androidx.camera.video.VideoRecordEvent
 import androidx.core.content.ContextCompat
 import dev.captureport.app.CapturePortApp
+import dev.captureport.app.ReceiverConnectionMode
 import dev.captureport.app.core.crypto.Ed25519KeyManager
 import dev.captureport.app.data.PairedDevice
 import dev.captureport.app.network.EnvelopeCodec.Envelope
@@ -26,6 +25,8 @@ import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+
+data class EndpointTarget(val host: String, val port: Int)
 
 class WsClient(
     private val context: Context,
@@ -49,6 +50,32 @@ class WsClient(
 
     private var activeDevice: PairedDevice? = null
 
+    companion object {
+        fun endpointTargets(
+            device: PairedDevice,
+            mode: ReceiverConnectionMode,
+        ): List<EndpointTarget> {
+            val localPort = device.localPort.takeIf { it > 0 } ?: device.port
+            val localHosts = (device.localHosts.ifBlank { device.host })
+                .split(",")
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
+                .distinct()
+                .map { EndpointTarget(it, localPort) }
+
+            val internetTarget = device.internetHost
+                .trim()
+                .takeIf { it.isNotEmpty() }
+                ?.let { EndpointTarget(it, device.internetPort.takeIf { port -> port > 0 } ?: device.port) }
+
+            return when (mode) {
+                ReceiverConnectionMode.LocalOnly -> localHosts
+                ReceiverConnectionMode.LocalThenInternet -> localHosts + listOfNotNull(internetTarget)
+                ReceiverConnectionMode.InternetOnly -> listOfNotNull(internetTarget)
+            }.distinct()
+        }
+    }
+
     // Connects to target paired PC receiver using sequential host list retry fallback
     fun connect(device: PairedDevice) {
         disconnect() // Cleanly shut down existing socket and cancel background loop
@@ -62,10 +89,12 @@ class WsClient(
 
                 try {
                     while (isActive && connectionAttempt.get() == attemptId) {
-                        val hosts = device.host.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+                        val targets = endpointTargets(device, CapturePortApp.instance.receiverConnectionMode)
                         var connected = false
 
-                        for (host in hosts) {
+                        for (target in targets) {
+                            val host = target.host
+                            val port = target.port
                             if (!isActive || connectionAttempt.get() != attemptId) break
                             _connectionState.value = "Connecting to $host..."
 
@@ -131,9 +160,9 @@ class WsClient(
                                 }
                             }
 
-                            tracingLog("Attempting connection to ws://$host:${device.port}/ws...")
+                            tracingLog("Attempting connection to ws://$host:$port/ws...")
                             val request = Request.Builder()
-                                .url("ws://$host:${device.port}/ws")
+                                .url("ws://$host:$port/ws")
                                 .build()
                             val currentWs = okHttpClient.newWebSocket(request, listener)
                             

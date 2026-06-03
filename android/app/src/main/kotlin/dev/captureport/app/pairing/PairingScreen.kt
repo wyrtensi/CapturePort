@@ -1,14 +1,9 @@
 package dev.captureport.app.pairing
 
-import android.content.Context
-import android.net.ConnectivityManager
-import android.net.NetworkCapabilities
 import android.net.Uri
 import androidx.camera.view.PreviewView
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -18,7 +13,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -55,19 +49,6 @@ fun PairingScreen(
     
     val uiState by viewModel.uiState.collectAsState()
 
-    var isVpnActive by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) {
-        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
-        if (cm != null) {
-            while (isActive) {
-                val activeNetwork = cm.activeNetwork
-                val capabilities = activeNetwork?.let { cm.getNetworkCapabilities(it) }
-                isVpnActive = capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true
-                delay(2000)
-            }
-        }
-    }
-    
     // Instantiate camera controller specifically for scanning QR code
     val cameraController = remember {
         CameraController(
@@ -103,8 +84,8 @@ fun PairingScreen(
             if (uri == null || uri.scheme != "captureport" || uri.host != "pair") {
                 viewModel.showError("Invalid pairing QR. Regenerate the QR code on your PC and scan again.")
             } else {
-                val host = uri.getQueryParameter("host") ?: ""
-                val hosts = buildList {
+                val legacyHost = uri.getQueryParameter("host") ?: ""
+                val legacyHosts = buildList {
                     addAll(
                         uri.getQueryParameter("hosts")
                             ?.split(',')
@@ -112,21 +93,44 @@ fun PairingScreen(
                             .map(String::trim)
                             .filter(String::isNotBlank)
                     )
-                    if (host.isNotBlank()) {
-                        add(host)
+                    if (legacyHost.isNotBlank()) {
+                        add(legacyHost)
                     }
                 }.distinct()
-                val port = uri.getQueryParameter("port")?.toIntOrNull() ?: -1
+                val localHosts = uri.getQueryParameter("local_hosts")
+                    ?.split(',')
+                    .orEmpty()
+                    .map(String::trim)
+                    .filter(String::isNotBlank)
+                    .ifEmpty { legacyHosts }
+                    .distinct()
+                val localPort = uri.getQueryParameter("local_port")?.toIntOrNull()
+                    ?: uri.getQueryParameter("port")?.toIntOrNull()
+                    ?: -1
+                val internetHost = uri.getQueryParameter("internet_host")
+                val internetPort = uri.getQueryParameter("internet_port")?.toIntOrNull()
+                val endpointMode = uri.getQueryParameter("endpoint_mode") ?: "local-only"
                 val pk = uri.getQueryParameter("pk") ?: ""
                 val name = uri.getQueryParameter("name") ?: ""
                 val os = uri.getQueryParameter("os") ?: ""
                 val nonce = uri.getQueryParameter("nonce") ?: ""
                 val sig = uri.getQueryParameter("sig") ?: ""
 
-                if (hosts.isEmpty() || port !in 1..65535 || pk.isBlank() || nonce.isBlank() || sig.isBlank()) {
+                if (localHosts.isEmpty() || localPort !in 1..65535 || pk.isBlank() || nonce.isBlank() || sig.isBlank()) {
                     viewModel.showError("Invalid pairing QR. Regenerate the QR code on your PC and scan again.")
                 } else {
-                    viewModel.startPairing(hosts, port, pk, name, os, nonce, sig)
+                    viewModel.startPairing(
+                        localHosts,
+                        localPort,
+                        internetHost,
+                        internetPort,
+                        endpointMode,
+                        pk,
+                        name,
+                        os,
+                        nonce,
+                        sig,
+                    )
                 }
             }
         }
@@ -317,40 +321,6 @@ fun PairingScreen(
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.align(Alignment.Center)
             )
-        }
-
-        // Animated network warning alert (sliding below the top bar)
-        AnimatedVisibility(
-            visible = isVpnActive,
-            enter = slideInVertically(initialOffsetY = { -it }) + fadeIn(),
-            exit = slideOutVertically(targetOffsetY = { -it }) + fadeOut(),
-            modifier = Modifier
-                .align(Alignment.TopCenter)
-                .padding(top = 76.dp)
-                .padding(horizontal = 24.dp)
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(Color(0xD92C1D1D), RoundedCornerShape(12.dp))
-                    .border(1.dp, Color(0x40FF8A80), RoundedCornerShape(12.dp))
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Warning,
-                    contentDescription = "Warning",
-                    tint = Color(0xFFFF8A80),
-                    modifier = Modifier.size(20.dp)
-                )
-                Spacer(modifier = Modifier.width(12.dp))
-                Text(
-                    text = "Network route changed. Pairing may need local network access.",
-                    color = Color(0xFFFDE8E8),
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Medium
-                )
-            }
         }
 
         // Overlay pairing state dialogs
