@@ -222,14 +222,29 @@ fun ReceiversScreen(
                 .statusBarsPadding()
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
+            horizontalArrangement = Arrangement.End
         ) {
-            Text(
-                text = "CapturePort",
-                color = Color.White,
-                fontSize = 18.sp,
-                fontWeight = FontWeight.Bold
-            )
+            if (isRecording) {
+                val infiniteTransition = rememberInfiniteTransition()
+                val dotAlpha by infiniteTransition.animateFloat(
+                    initialValue = 1f, targetValue = 0.2f,
+                    animationSpec = infiniteRepeatable(tween(1000, easing = LinearEasing), RepeatMode.Reverse)
+                )
+                Row(
+                    modifier = Modifier
+                        .background(Color(0x99FF3B30), RoundedCornerShape(16.dp))
+                        .padding(horizontal = 10.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(Color.White.copy(alpha = dotAlpha)))
+                    Spacer(modifier = Modifier.width(5.dp))
+                    Text(
+                        text = "REC ${formatDuration(recordingDuration)}",
+                        color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace
+                    )
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+            }
 
             Box {
                 IconButton(
@@ -311,26 +326,6 @@ fun ReceiversScreen(
                     text = "Paired PC Receivers",
                     color = Color(0xFFDEE0FF), fontSize = 12.sp, fontWeight = FontWeight.Bold
                 )
-                if (isRecording) {
-                    val infiniteTransition = rememberInfiniteTransition()
-                    val dotAlpha by infiniteTransition.animateFloat(
-                        initialValue = 1f, targetValue = 0.2f,
-                        animationSpec = infiniteRepeatable(tween(1000, easing = LinearEasing), RepeatMode.Reverse)
-                    )
-                    Row(
-                        modifier = Modifier
-                            .background(Color(0x99FF3B30), RoundedCornerShape(16.dp))
-                            .padding(horizontal = 10.dp, vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(Color.White.copy(alpha = dotAlpha)))
-                        Spacer(modifier = Modifier.width(5.dp))
-                        Text(
-                            text = "REC ${formatDuration(recordingDuration)}",
-                            color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace
-                        )
-                    }
-                }
                 Spacer(modifier = Modifier.weight(1f))
             }
 
@@ -458,8 +453,8 @@ fun ReceiversScreen(
                                             onClick = { deviceToEditId = device.id },
                                             modifier = Modifier
                                                 .size(32.dp)
-                                                .background(Color(0x153B5BFF), RoundedCornerShape(8.dp))
-                                                .border(1.dp, Color(0x303B5BFF), RoundedCornerShape(8.dp))
+                                                .clip(CircleShape)
+                                                .background(Color(0x263B5BFF), CircleShape)
                                         ) {
                                             Icon(
                                                 imageVector = Icons.Default.Edit,
@@ -473,13 +468,13 @@ fun ReceiversScreen(
                                             onClick = { deviceToDeleteId = device.id },
                                             modifier = Modifier
                                                 .size(32.dp)
-                                                .background(Color(0x15FF3B30), RoundedCornerShape(8.dp))
-                                                .border(1.dp, Color(0x30FF3B30), RoundedCornerShape(8.dp))
+                                                .clip(CircleShape)
+                                                .background(Color(0x26FF3B30), CircleShape)
                                         ) {
                                             Icon(
                                                 imageVector = Icons.Default.Delete,
                                                 contentDescription = "Delete device",
-                                                tint = Color(0xFFFFB4AB),
+                                                tint = Color(0xFFFF8A80),
                                                 modifier = Modifier.size(14.dp)
                                             )
                                         }

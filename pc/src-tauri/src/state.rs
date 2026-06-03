@@ -50,9 +50,12 @@ pub struct MediaItem {
 
 // Active websocket transmission session
 pub struct WsSession {
+    pub session_id: String,
     pub device_id: String,
     pub name: String,
     pub tx: tokio::sync::mpsc::Sender<axum::extract::ws::Message>,
+    pub ip: String,
+    pub channel: String,
 }
 
 pub struct PendingRequest {
@@ -145,25 +148,35 @@ impl AppState {
     // Register active device session
     pub fn register_session(
         &self,
+        session_id: String,
         device_id: String,
         name: String,
         tx: tokio::sync::mpsc::Sender<axum::extract::ws::Message>,
+        ip: String,
+        channel: String,
     ) {
         let mut inner = self.inner.lock().unwrap();
         inner.active_sessions.insert(
             device_id.clone(),
             WsSession {
+                session_id,
                 device_id,
                 name,
                 tx,
+                ip,
+                channel,
             },
         );
     }
 
-    // Unregister active device session
-    pub fn unregister_session(&self, device_id: &str) {
+    // Unregister active device session only if the session ID matches
+    pub fn unregister_session(&self, device_id: &str, session_id: &str) {
         let mut inner = self.inner.lock().unwrap();
-        inner.active_sessions.remove(device_id);
+        if let Some(session) = inner.active_sessions.get(device_id) {
+            if session.session_id == session_id {
+                inner.active_sessions.remove(device_id);
+            }
+        }
     }
 
     // Add in-flight request for correlation

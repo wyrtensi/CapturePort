@@ -5,7 +5,7 @@ use crate::state::AppState;
 use crate::ws::handler::SocketHandler;
 use anyhow::{Context, Result};
 use axum::{
-    extract::{ws::WebSocketUpgrade, State},
+    extract::{ws::WebSocketUpgrade, ConnectInfo, State},
     response::IntoResponse,
     routing::get,
     Router,
@@ -35,7 +35,10 @@ impl WsServer {
 
         // Run axum server in a spawned Tokio background context
         tokio::spawn(async move {
-            if let Err(e) = axum::serve(listener, app).await {
+            if let Err(e) = axum::serve(
+                listener,
+                app.into_make_service_with_connect_info::<SocketAddr>(),
+            ).await {
                 tracing::error!("Axum server runtime error: {:?}", e);
             }
         });
@@ -46,7 +49,8 @@ impl WsServer {
 
 async fn ws_handler(
     ws: WebSocketUpgrade,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     State((state, app_handle)): State<(AppState, Option<tauri::AppHandle>)>,
 ) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| SocketHandler::handle_socket(socket, state, app_handle))
+    ws.on_upgrade(move |socket| SocketHandler::handle_socket(socket, addr, state, app_handle))
 }

@@ -64,9 +64,16 @@ const narrowMedia = blockAfter("@media (max-width: 700px)");
 
 const pairingMarkup = source.slice(
   source.indexOf('{:else if windowLabel === "pairing"}'),
-  source.indexOf('{:else if windowLabel === "settings"}')
+  source.indexOf('</section>')
 );
-const settingsMarkup = source.slice(source.indexOf('{:else if windowLabel === "settings"}'));
+const settingsMarkup = source.slice(
+  source.indexOf('<div class="settings-drawer"'),
+  source.indexOf('</main>')
+);
+const sidebarMarkup = source.slice(
+  source.indexOf('<nav class="sidebar">'),
+  source.indexOf('</nav>')
+);
 
 assert(
   pairingMarkup.includes("Local only") &&
@@ -75,12 +82,16 @@ assert(
   "Pairing tab must expose explicit QR endpoint mode controls."
 );
 assert(
-  !pairingMarkup.includes("Paired Devices"),
+  !pairingMarkup.includes("PAIRED DEVICES"),
   "Pairing tab should only contain QR pairing, not paired device management."
 );
 assert(
-  settingsMarkup.includes("Paired Devices") && settingsMarkup.includes("settings-tabs"),
-  "Paired device management must live in the Settings tab container."
+  sidebarMarkup.includes("PAIRED DEVICES"),
+  "Paired device management must live in the sidebar."
+);
+assert(
+  !settingsMarkup.includes("settings-device-list") && !settingsMarkup.includes("Paired Devices"),
+  "Paired device management must not live in the Settings tab container."
 );
 assert(
   !source.includes("legacyRouteActive") && !source.includes("route-warning-text"),
@@ -125,10 +136,10 @@ assertDeclaration(
   "Very narrow pairing layout should collapse to one column."
 );
 
-const settingsDeviceList = declarationsFor(".settings-device-list");
+const sidebarDevicesList = declarationsFor(".sidebar-devices-list");
 assertDeclaration(
-  settingsDeviceList,
+  sidebarDevicesList,
   "overflow-y",
   "auto",
-  "Only the Settings paired-device list should scroll when many devices are present."
+  "Only the sidebar paired-device list should scroll when many devices are present."
 );

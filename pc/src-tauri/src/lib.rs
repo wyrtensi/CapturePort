@@ -57,6 +57,8 @@ pub struct PairedDeviceResponse {
     pub online: bool,
     pub last_seen_ms: u64,
     pub exposed_to_mcp: bool,
+    pub ip: Option<String>,
+    pub channel: Option<String>,
 }
 
 #[tauri::command]
@@ -66,7 +68,10 @@ async fn get_paired_devices(
     let inner = state.inner.lock().unwrap();
     let mut list = Vec::new();
     for (id, dev) in &inner.paired_devices {
-        let online = inner.active_sessions.contains_key(id);
+        let session = inner.active_sessions.get(id);
+        let online = session.is_some();
+        let ip = session.map(|s| s.ip.clone());
+        let channel = session.map(|s| s.channel.clone());
         list.push(PairedDeviceResponse {
             id: id.clone(),
             name: dev.name.clone(),
@@ -75,6 +80,8 @@ async fn get_paired_devices(
             online,
             last_seen_ms: dev.last_seen_ms,
             exposed_to_mcp: dev.exposed_to_mcp,
+            ip,
+            channel,
         });
     }
     list.sort_by(|a, b| a.name.cmp(&b.name));
@@ -127,11 +134,16 @@ async fn unpair_device(
     app_handle: tauri::AppHandle,
     id: String,
 ) -> Result<(), String> {
-    {
+    let session = {
         let mut inner = state.inner.lock().unwrap();
         inner.paired_devices.remove(&id);
-        inner.active_sessions.remove(&id);
+        inner.active_sessions.remove(&id)
+    };
+
+    if let Some(session) = session {
+        let _ = session.tx.send(axum::extract::ws::Message::Close(None)).await;
     }
+
     state.save_paired_devices();
     let _ = app_handle.emit("devices-changed", ());
     Ok(())
@@ -147,13 +159,18 @@ async fn regenerate_pc_identity(
         crate::pairing::keys::KeystoreManager::regenerate_keys().map_err(|e| e.to_string())?;
 
     // 2. Update state keys and clear paired devices
-    {
+    let sessions = {
         let mut inner = state.inner.lock().unwrap();
         inner.pc_public_key = pubkey;
         inner.pc_private_key = privkey;
         inner.paired_devices.clear();
-        inner.active_sessions.clear();
+        std::mem::take(&mut inner.active_sessions)
+    };
+
+    for (_, session) in sessions {
+        let _ = session.tx.send(axum::extract::ws::Message::Close(None)).await;
     }
+
     state.save_paired_devices();
 
     // 3. Generate new pairing info

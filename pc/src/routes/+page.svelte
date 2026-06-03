@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { fade } from "svelte/transition";
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
 
@@ -25,7 +26,9 @@
   let pairingEndpointMode = $state("local-only");
   let mediaHistory = $state<any[]>([]);
   let pairedDevices = $state<any[]>([]);
-  let settingsTab = $state<"general" | "network" | "devices">("general");
+  let settingsTab = $state<"general" | "network">("general");
+  let isSettingsOpen = $state(false);
+  let manualIpInput = $state("");
   let firewallStatus = $state("");
   let settings = $state({
     deviceName: "PC-Machine",
@@ -39,6 +42,11 @@
     externalPort: 7878,
     externalEnabled: false
   });
+
+  // Save Settings State
+  let saveStatus = $state<"" | "saving" | "success" | "error">("");
+  let saveErrorMessage = $state("");
+  let saveTimeout: any;
 
   // Clipboard Feedback State
   let copyTarget = $state("");
@@ -130,7 +138,33 @@
     }
   }
 
+  async function openSettings() {
+    try {
+      settings = await invoke("get_settings");
+    } catch (e) {}
+    isSettingsOpen = true;
+  }
+
+  async function addManualIp() {
+    if (!manualIpInput.trim()) return;
+    try {
+      settings.localIpMode = "custom";
+      settings.customLocalHost = manualIpInput.trim();
+      const snapshot = $state.snapshot(settings);
+      await invoke("save_settings", { newSettings: snapshot });
+      await refreshPairingInfo();
+      manualIpInput = "";
+    } catch (e) {
+      alert(`Failed to set manual IP: ${e}`);
+    }
+  }
+
   async function loadView(view: WindowView) {
+    if (view === "settings") {
+      await openSettings();
+      return;
+    }
+
     windowLabel = view;
 
     if (view === "pairing") {
@@ -162,59 +196,81 @@
       } catch (e) {}
     }
 
-    if (view === "settings" || view === "main") {
+    if (view === "main") {
       try {
         settings = await invoke("get_settings");
       } catch (e) {}
     }
-
-    if (view === "settings") {
-      await loadPairedDevices();
-    }
   }
 
-  onMount(async () => {
-    // Determine the initial view from either the window label or the startup query.
+  onMount(() => {
     let initialView: WindowView = "main";
+    let unlistenPairingStatus: () => void;
+    let unlistenMediaReceived: () => void;
+    let unlistenDevicesChanged: () => void;
+    let unlistenNavigate: () => void;
 
-    try {
-      const { getCurrentWindow } = await import("@tauri-apps/api/window");
-      initialView = normalizeView(getCurrentWindow().label);
-    } catch (e) {
-      initialView = "main";
-    }
+    async function init() {
+      try {
+        const { getCurrentWindow } = await import("@tauri-apps/api/window");
+        initialView = normalizeView(getCurrentWindow().label);
+      } catch (e) {
+        initialView = "main";
+      }
 
-    const requestedView = normalizeView(new URLSearchParams(window.location.search).get("view"));
-    if (requestedView !== "main") {
-      initialView = requestedView;
-    }
+      const requestedView = normalizeView(new URLSearchParams(window.location.search).get("view"));
+      if (requestedView !== "main") {
+        initialView = requestedView;
+      }
 
-    await loadView(initialView);
-
-    listen("pairing-status", (event: any) => {
-      pairingStatus = event.payload;
-    });
-
-    listen("media-received", (event: any) => {
-      mediaHistory = [event.payload, ...mediaHistory];
-    });
-
-    listen("devices-changed", async () => {
+      await loadView(initialView);
       await loadPairedDevices();
-    });
 
-    listen("navigate", (event: any) => {
-      void loadView(normalizeView(event.payload));
-    });
+      unlistenPairingStatus = await listen("pairing-status", (event: any) => {
+        pairingStatus = event.payload;
+      });
+
+      unlistenMediaReceived = await listen("media-received", (event: any) => {
+        mediaHistory = [event.payload, ...mediaHistory];
+      });
+
+      unlistenDevicesChanged = await listen("devices-changed", async () => {
+        await loadPairedDevices();
+      });
+
+      unlistenNavigate = await listen("navigate", (event: any) => {
+        void loadView(normalizeView(event.payload));
+      });
+    }
+
+    void init();
+
+    return () => {
+      if (unlistenPairingStatus) unlistenPairingStatus();
+      if (unlistenMediaReceived) unlistenMediaReceived();
+      if (unlistenDevicesChanged) unlistenDevicesChanged();
+      if (unlistenNavigate) unlistenNavigate();
+      if (saveTimeout) clearTimeout(saveTimeout);
+    };
   });
 
   async function saveSettings() {
+    saveStatus = "saving";
     try {
       const snapshot = $state.snapshot(settings);
       await invoke("save_settings", { newSettings: snapshot });
-      alert("Settings saved successfully.");
+      saveStatus = "success";
+      if (saveTimeout) clearTimeout(saveTimeout);
+      saveTimeout = setTimeout(() => {
+        saveStatus = "";
+      }, 3000);
     } catch (e) {
-      alert(`Failed to save settings: ${e}`);
+      saveStatus = "error";
+      saveErrorMessage = String(e);
+      if (saveTimeout) clearTimeout(saveTimeout);
+      saveTimeout = setTimeout(() => {
+        saveStatus = "";
+      }, 5000);
     }
   }
 
@@ -263,10 +319,13 @@
       <div class="logo-area">
         <div class="logo-mark" aria-hidden="true">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M5 12h14" />
-            <path d="M8 8l-4 4 4 4" />
-            <path d="M16 8l4 4-4 4" />
-            <path d="M12 5v14" />
+            <circle cx="12" cy="12" r="10" />
+            <line x1="14.31" y1="8" x2="20.05" y2="17.94" />
+            <line x1="9.69" y1="8" x2="21.17" y2="8" />
+            <line x1="7.38" y1="12" x2="13.12" y2="2.06" />
+            <line x1="9.69" y1="16" x2="3.95" y2="6.06" />
+            <line x1="14.31" y1="16" x2="2.83" y2="16" />
+            <line x1="16.62" y1="12" x2="10.88" y2="21.94" />
           </svg>
         </div>
         <h3>CapturePort</h3>
@@ -286,7 +345,7 @@
           </svg>
           <span>Pairing</span>
         </button>
-        <button class="nav-btn" class:active={windowLabel === "settings"} onclick={() => void loadView("settings")}>
+        <button class="nav-btn settings-trigger-btn" class:active={isSettingsOpen} onclick={openSettings}>
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d="M4 7h7" />
             <path d="M15 7h5" />
@@ -297,6 +356,61 @@
           </svg>
           <span>Settings</span>
         </button>
+      </div>
+
+      <div class="sidebar-devices-container">
+        <div class="sidebar-devices-header">
+          <span>PAIRED DEVICES</span>
+          {#if pairedDevices.length > 0}
+            <span class="device-count-badge">{pairedDevices.length}</span>
+          {/if}
+        </div>
+        <div class="sidebar-devices-list">
+          {#if pairedDevices.length === 0}
+            <div class="sidebar-empty-devices">
+              No paired devices
+            </div>
+          {:else}
+            {#each pairedDevices as device}
+              <div class="sidebar-device-card">
+                <div class="sidebar-device-main">
+                  <div class="sidebar-device-details">
+                    <input
+                      class="sidebar-device-alias-input"
+                      value={device.alias || device.name}
+                      onchange={(e) => renamePairedDevice(device.id, e.currentTarget.value)}
+                      title="Click to rename"
+                    />
+                    <div class="sidebar-device-os-row">
+                      <span class="sidebar-device-os">{device.os}</span>
+                      {#if device.online}
+                        <span class="sidebar-device-ip-info">
+                          {device.ip || 'Unknown'} • {device.channel || 'Local'}
+                        </span>
+                      {/if}
+                    </div>
+                  </div>
+                  <span class="sidebar-status-dot" class:online={device.online} title={device.online ? "Online" : "Offline"}></span>
+                </div>
+                <div class="sidebar-device-controls">
+                  <div class="sidebar-mcp-container">
+                    <label class="compact-switch">
+                      <input type="checkbox" checked={device.exposed_to_mcp} onchange={(e) => toggleMcp(device.id, e.currentTarget.checked)} />
+                      <span class="compact-slider round"></span>
+                    </label>
+                    <span class="compact-mcp-label">MCP</span>
+                  </div>
+                  <button type="button" class="sidebar-unpair-btn" onclick={() => unpairDevice(device.id)} title="Unpair Device">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <polyline points="3 6 5 6 21 6"></polyline>
+                      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                    </svg>
+                  </button>
+                </div>
+              </div>
+            {/each}
+          {/if}
+        </div>
       </div>
     </nav>
 
@@ -394,6 +508,20 @@
                 <button class:active={pairingEndpointMode === "internet-only"} onclick={() => setPairingEndpointMode("internet-only")}>Internet only</button>
               </div>
 
+              <div class="manual-ip-section">
+                <form class="manual-ip-form" onsubmit={(e) => { e.preventDefault(); addManualIp(); }}>
+                  <div class="manual-ip-input-container">
+                    <input
+                      type="text"
+                      placeholder="Enter PC IP manually (e.g. 192.168.1.50)"
+                      bind:value={manualIpInput}
+                      class="manual-ip-input"
+                    />
+                    <button type="submit" class="manual-ip-btn">Set</button>
+                  </div>
+                </form>
+              </div>
+
               <div class="connection-details-card">
                 {#if pairingFingerprint}
                   <div class="detail-section">
@@ -476,133 +604,130 @@
                 </div>
               </footer>
             </div>
-
           </div>
-        </div>
-
-      {:else if windowLabel === "settings"}
-        <div class="content-header settings-header">
-          <h2>Settings</h2>
-          <p>Configure your local network receiver parameters</p>
-        </div>
-
-        <div class="settings-tabs">
-          <div class="tab-strip">
-            <button class:active={settingsTab === "general"} onclick={() => settingsTab = "general"}>General</button>
-            <button class:active={settingsTab === "network"} onclick={() => settingsTab = "network"}>Network</button>
-            <button class:active={settingsTab === "devices"} onclick={() => settingsTab = "devices"}>Paired Devices</button>
-          </div>
-
-          <form class="settings-form tab-panel" onsubmit={(e) => { e.preventDefault(); saveSettings(); }}>
-            {#if settingsTab === "general"}
-              <div class="form-group">
-                <label for="device-name">Device Name</label>
-                <input id="device-name" type="text" bind:value={settings.deviceName} />
-              </div>
-
-              <div class="form-group">
-                <label for="port">WebSocket Port</label>
-                <input id="port" type="number" bind:value={settings.port} />
-              </div>
-
-              <div class="form-group checkbox-group">
-                <input id="mcp-enabled" type="checkbox" bind:checked={settings.mcpEnabled} />
-                <label for="mcp-enabled">Enable MCP Camera Server for AI agents</label>
-              </div>
-
-              <div class="form-group checkbox-group">
-                <input id="auto-start" type="checkbox" bind:checked={settings.autoStart} />
-                <label for="auto-start">Launch automatically on system startup</label>
-              </div>
-
-              <div class="form-group checkbox-group">
-                <input id="close-to-tray" type="checkbox" bind:checked={settings.closeToTray} />
-                <label for="close-to-tray">Minimize to system tray instead of exiting on window close</label>
-              </div>
-            {:else if settingsTab === "network"}
-              <div class="form-grid">
-                <div class="form-group">
-                  <label for="local-ip-mode">Advertised Local IP</label>
-                  <select id="local-ip-mode" bind:value={settings.localIpMode}>
-                    <option value="auto">Auto</option>
-                    <option value="custom">Custom</option>
-                  </select>
-                </div>
-                <div class="form-group">
-                  <label for="custom-local-host">Custom Local Host</label>
-                  <div class="inline-input">
-                    <input id="custom-local-host" type="text" bind:value={settings.customLocalHost} placeholder="192.168.0.111" />
-                    <button type="button" class="secondary-btn" onclick={detectLocalIp}>Detect</button>
-                  </div>
-                </div>
-                <div class="form-group checkbox-group wide">
-                  <input id="external-enabled" type="checkbox" bind:checked={settings.externalEnabled} />
-                  <label for="external-enabled">Enable internet endpoint in QR codes</label>
-                </div>
-                <div class="form-group">
-                  <label for="external-host">External Host / DDNS</label>
-                  <div class="inline-input">
-                    <input id="external-host" type="text" bind:value={settings.externalHost} placeholder="capture.example.net" />
-                    <button type="button" class="secondary-btn" onclick={detectPublicIp}>Detect</button>
-                  </div>
-                </div>
-                <div class="form-group">
-                  <label for="external-port">External Port</label>
-                  <div class="inline-input">
-                    <input id="external-port" type="number" bind:value={settings.externalPort} />
-                    <button type="button" class="secondary-btn" onclick={openFirewallPort}>Open</button>
-                  </div>
-                </div>
-              </div>
-              {#if firewallStatus}
-                <p class="settings-note">{firewallStatus}</p>
-              {/if}
-              <p class="settings-note">Router port forwarding is manual. Forward the external TCP port to this PC local address and WebSocket port.</p>
-            {:else}
-              <div class="settings-device-list">
-                {#if pairedDevices.length === 0}
-                  <div class="empty-devices">
-                    <p>No devices paired yet.</p>
-                    <p class="subtitle">Use the QR code to pair your first device.</p>
-                  </div>
-                {:else}
-                  {#each pairedDevices as device}
-                    <div class="device-card settings-device-card">
-                      <div class="device-info-row">
-                        <div class="device-details">
-                          <input
-                            class="device-alias-input"
-                            value={device.alias || device.name}
-                            onchange={(e) => renamePairedDevice(device.id, e.currentTarget.value)}
-                          />
-                          <span class="device-os">{device.os}</span>
-                        </div>
-                        <span class="status-badge" class:online={device.online}>{device.online ? "Online" : "Offline"}</span>
-                      </div>
-
-                      <div class="device-controls">
-                        <div class="mcp-toggle-container">
-                          <label class="switch">
-                            <input type="checkbox" checked={device.exposed_to_mcp} onchange={(e) => toggleMcp(device.id, e.currentTarget.checked)} />
-                            <span class="slider round"></span>
-                          </label>
-                          <span class="mcp-label">Pass to MCP</span>
-                        </div>
-                        <button type="button" class="unpair-btn" onclick={() => unpairDevice(device.id)}>Unpair</button>
-                      </div>
-                    </div>
-                  {/each}
-                {/if}
-              </div>
-            {/if}
-
-            {#if settingsTab !== "devices"}
-              <button type="submit" class="submit-btn">Save Configurations</button>
-            {/if}
-          </form>
         </div>
       {/if}
     </section>
+  </div>
+
+  {#if isSettingsOpen}
+    <!-- svelte-ignore a11y_click_events_have_key_events -->
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="settings-backdrop" transition:fade onclick={() => isSettingsOpen = false}></div>
+  {/if}
+
+  <div class="settings-drawer" class:open={isSettingsOpen}>
+    <div class="drawer-header">
+      <h3>Settings</h3>
+      <button class="close-drawer-btn" onclick={() => isSettingsOpen = false} aria-label="Close settings">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="18" y1="6" x2="6" y2="18"></line>
+          <line x1="6" y1="6" x2="18" y2="18"></line>
+        </svg>
+      </button>
+    </div>
+    
+    <div class="drawer-content">
+      <div class="settings-tabs">
+        <div class="tab-strip">
+          <button class:active={settingsTab === "general"} onclick={() => settingsTab = "general"}>General</button>
+          <button class:active={settingsTab === "network"} onclick={() => settingsTab = "network"}>Network</button>
+        </div>
+
+        <form class="settings-form tab-panel" onsubmit={(e) => { e.preventDefault(); saveSettings(); }}>
+          {#if settingsTab === "general"}
+            <div class="form-group">
+              <label for="device-name">Device Name</label>
+              <input id="device-name" type="text" bind:value={settings.deviceName} />
+            </div>
+
+            <div class="form-group">
+              <label for="port">WebSocket Port</label>
+              <input id="port" type="number" bind:value={settings.port} />
+            </div>
+
+            <div class="form-group checkbox-group">
+              <input id="mcp-enabled" type="checkbox" bind:checked={settings.mcpEnabled} />
+              <label for="mcp-enabled">Enable MCP Camera Server for AI agents</label>
+            </div>
+
+            <div class="form-group checkbox-group">
+              <input id="auto-start" type="checkbox" bind:checked={settings.autoStart} />
+              <label for="auto-start">Launch automatically on system startup</label>
+            </div>
+
+            <div class="form-group checkbox-group">
+              <input id="close-to-tray" type="checkbox" bind:checked={settings.closeToTray} />
+              <label for="close-to-tray">Minimize to system tray instead of exiting on window close</label>
+            </div>
+          {:else if settingsTab === "network"}
+            <div class="form-group">
+              <label for="local-ip-mode">Advertised Local IP</label>
+              <select id="local-ip-mode" bind:value={settings.localIpMode}>
+                <option value="auto">Auto</option>
+                <option value="custom">Custom</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="custom-local-host">Custom Local Host</label>
+              <div class="inline-input">
+                <input id="custom-local-host" type="text" bind:value={settings.customLocalHost} placeholder="192.168.0.111" />
+                <button type="button" class="secondary-btn" onclick={detectLocalIp}>Detect</button>
+              </div>
+            </div>
+            <div class="form-group checkbox-group">
+              <input id="external-enabled" type="checkbox" bind:checked={settings.externalEnabled} />
+              <label for="external-enabled">Enable internet endpoint in QR codes</label>
+            </div>
+            <div class="form-group">
+              <label for="external-host">External Host / DDNS</label>
+              <div class="inline-input">
+                <input id="external-host" type="text" bind:value={settings.externalHost} placeholder="capture.example.net" />
+                <button type="button" class="secondary-btn" onclick={detectPublicIp}>Detect</button>
+              </div>
+            </div>
+            <div class="form-group">
+              <label for="external-port">External Port</label>
+              <div class="inline-input">
+                <input id="external-port" type="number" bind:value={settings.externalPort} />
+                <button type="button" class="secondary-btn" onclick={openFirewallPort}>Open</button>
+              </div>
+            </div>
+            {#if firewallStatus}
+              <p class="settings-note">{firewallStatus}</p>
+            {/if}
+            <p class="settings-note">Router port forwarding is manual. Forward the external TCP port to this PC local address and WebSocket port.</p>
+          {/if}
+
+          <button type="submit" class="submit-btn">Save Configurations</button>
+
+          <div class="save-status-container">
+            {#if saveStatus === 'saving'}
+              <div class="save-status-message saving animate-fade">
+                <span class="spinner-small" aria-hidden="true"></span>
+                <span>Saving configurations...</span>
+              </div>
+            {:else if saveStatus === 'success'}
+              <div class="save-status-message success animate-scale">
+                <svg class="status-icon-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <polyline points="20 6 9 17 4 12" />
+                </svg>
+                <span>Configurations saved successfully!</span>
+              </div>
+            {:else if saveStatus === 'error'}
+              <div class="save-status-message error animate-scale">
+                <svg class="status-icon-error" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <circle cx="12" cy="12" r="10" />
+                  <line x1="12" y1="8" x2="12" y2="12" />
+                  <line x1="12" y1="16" x2="12.01" y2="16" />
+                </svg>
+                <span>Failed to save: {saveErrorMessage}</span>
+              </div>
+            {/if}
+          </div>
+        </form>
+      </div>
+    </div>
   </div>
 </main>
 
@@ -883,7 +1008,21 @@
     font-size: 11px;
     font-weight: 700;
     cursor: pointer;
-    transition: border-color 0.2s ease, background 0.2s ease, color 0.2s ease;
+    transition: border-color 0.2s ease, background 0.2s ease, color 0.2s ease, transform 0.1s ease;
+  }
+
+  .endpoint-mode-group button:hover,
+  .tab-strip button:hover,
+  .secondary-btn:hover {
+    border-color: rgba(255, 255, 255, 0.16);
+    background: rgba(255, 255, 255, 0.06);
+    color: #FFFFFF;
+  }
+
+  .endpoint-mode-group button:active,
+  .tab-strip button:active,
+  .secondary-btn:active {
+    transform: scale(0.98);
   }
 
   .endpoint-mode-group button.active,
@@ -891,6 +1030,12 @@
     border-color: rgba(91, 123, 255, 0.55);
     background: rgba(59, 91, 255, 0.18);
     color: #FFFFFF;
+  }
+
+  .secondary-btn {
+    padding: 0 16px;
+    font-size: 13px;
+    min-height: 42px; /* Matches the text input height perfectly */
   }
 
   /* Connection details card */
@@ -1045,7 +1190,7 @@
   }
 
   .animate-scale {
-    animation: scaleIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    animation: scaleIn 0.25s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
   }
 
   @keyframes scaleIn {
@@ -1152,152 +1297,7 @@
     color: #C5C4DD;
   }
 
-  /* Devices list and card stylings */
-  .empty-devices {
-    text-align: center;
-    color: #989A9F;
-    padding: 64px 20px;
-    font-size: 14px;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    flex: 1;
-    background: rgba(255, 255, 255, 0.01);
-    border: 1px dashed rgba(255, 255, 255, 0.08);
-    border-radius: 20px;
-    margin-top: 12px;
-  }
 
-  .empty-devices p {
-    margin: 0;
-    font-weight: 500;
-  }
-
-  .empty-devices .subtitle {
-    font-size: 12px;
-    color: #626469;
-    margin-top: 6px;
-  }
-
-  .device-card {
-    background: rgba(255, 255, 255, 0.02);
-    border: 1px solid rgba(255, 255, 255, 0.06);
-    border-radius: 16px;
-    padding: 18px;
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-    box-shadow: 
-      0 4px 12px rgba(0, 0, 0, 0.15),
-      inset 0 1px 0 rgba(255, 255, 255, 0.05);
-    transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
-  }
-
-  .device-card:hover {
-    background: rgba(255, 255, 255, 0.04);
-    border-color: rgba(164, 180, 255, 0.15);
-    transform: translateY(-1px);
-    box-shadow: 
-      0 8px 20px rgba(0, 0, 0, 0.25),
-      inset 0 1px 0 rgba(255, 255, 255, 0.08);
-  }
-
-  .device-info-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-  }
-
-  .device-details {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
-
-  .device-os {
-    font-size: 11px;
-    color: #989A9F;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    font-weight: 600;
-  }
-
-  .status-badge {
-    font-size: 10px;
-    font-weight: 600;
-    padding: 4px 10px;
-    border-radius: 20px;
-    background: rgba(255, 92, 92, 0.08);
-    color: #FF8F8F;
-    border: 1px solid rgba(255, 92, 92, 0.15);
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-  }
-
-  .status-badge::before {
-    content: '';
-    display: inline-block;
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background-color: #FF5C5C;
-  }
-
-  .status-badge.online {
-    background: rgba(59, 255, 138, 0.08);
-    color: #8FFF9F;
-    border: 1px solid rgba(59, 255, 138, 0.15);
-  }
-
-  .status-badge.online::before {
-    background-color: #3BFF8A;
-    box-shadow: 0 0 6px #3BFF8A;
-  }
-
-  .device-controls {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    border-top: 1px solid rgba(255, 255, 255, 0.06);
-    padding-top: 14px;
-  }
-
-  .mcp-toggle-container {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
-
-  .mcp-label {
-    font-size: 12px;
-    font-weight: 500;
-    color: #C5C4DD;
-  }
-
-  .unpair-btn {
-    background: rgba(255, 92, 92, 0.05);
-    border: 1px solid rgba(255, 92, 92, 0.2);
-    color: #FF8F8F;
-    padding: 6px 14px;
-    border-radius: 8px;
-    font-size: 11px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
-  }
-
-  .unpair-btn:hover {
-    background-color: rgba(255, 92, 92, 0.12);
-    border-color: rgba(255, 92, 92, 0.4);
-    color: #FF5C5C;
-    box-shadow: 0 4px 12px rgba(255, 92, 92, 0.15);
-  }
-
-  .unpair-btn:active {
-    transform: scale(0.97);
-  }
 
   @media (max-width: 860px) {
     .pairing-content {
@@ -1407,17 +1407,7 @@
       font-size: 11px;
     }
 
-    .empty-devices {
-      padding: 28px 12px;
-      margin-top: 0;
-      border-radius: 16px;
-    }
 
-    .device-card {
-      padding: 14px;
-      gap: 12px;
-      border-radius: 14px;
-    }
   }
 
   @media (max-width: 700px) {
@@ -1426,61 +1416,7 @@
     }
   }
 
-  /* Custom Switch Toggle styling */
-  .switch {
-    position: relative;
-    display: inline-block;
-    width: 36px;
-    height: 20px;
-  }
 
-  .switch input {
-    opacity: 0;
-    width: 0;
-    height: 0;
-  }
-
-  .slider {
-    position: absolute;
-    cursor: pointer;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background-color: rgba(255, 255, 255, 0.08);
-    border: 1px solid rgba(255, 255, 255, 0.06);
-    transition: .3s cubic-bezier(0.16, 1, 0.3, 1);
-  }
-
-  .slider:before {
-    position: absolute;
-    content: "";
-    height: 12px;
-    width: 12px;
-    left: 3px;
-    bottom: 3px;
-    background-color: #989A9F;
-    transition: .3s cubic-bezier(0.16, 1, 0.3, 1);
-  }
-
-  input:checked + .slider {
-    background-color: rgba(59, 91, 255, 0.2);
-    border-color: rgba(59, 91, 255, 0.4);
-  }
-
-  input:checked + .slider:before {
-    transform: translateX(16px);
-    background-color: #3B5BFF;
-    box-shadow: 0 0 8px rgba(59, 91, 255, 0.6);
-  }
-
-  .slider.round {
-    border-radius: 20px;
-  }
-
-  .slider.round:before {
-    border-radius: 50%;
-  }
 
   /* Dashboard Core (Sidebar & Content) */
   .dashboard {
@@ -1754,10 +1690,6 @@
   }
 
   /* Settings Form Layout */
-  .settings-header {
-    flex: 0 0 auto;
-  }
-
   .settings-tabs {
     width: min(760px, 100%);
     min-height: 0;
@@ -1768,9 +1700,12 @@
   }
 
   .tab-strip {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    display: flex;
     gap: 8px;
+  }
+
+  .tab-strip button {
+    flex: 1;
   }
 
   .tab-panel {
@@ -1783,16 +1718,6 @@
     display: flex;
     flex-direction: column;
     gap: 16px;
-  }
-
-  .form-grid {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 16px;
-  }
-
-  .form-group.wide {
-    grid-column: 1 / -1;
   }
 
   .inline-input {
@@ -1810,30 +1735,6 @@
     font-size: 12px;
     line-height: 1.5;
     margin: 0;
-  }
-
-  .settings-device-list {
-    min-height: 0;
-    overflow-y: auto;
-    scrollbar-gutter: stable;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    padding-right: 6px;
-  }
-
-  .settings-device-card {
-    max-width: none;
-  }
-
-  .device-alias-input {
-    width: 100%;
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    background: rgba(255, 255, 255, 0.035);
-    color: #FFFFFF;
-    border-radius: 8px;
-    padding: 8px 10px;
-    font-weight: 700;
   }
 
   .form-group {
@@ -1860,11 +1761,68 @@
     transition: all 0.2s ease;
   }
 
+  .form-group input[type="text"]:hover,
+  .form-group input[type="number"]:hover {
+    border-color: rgba(255, 255, 255, 0.16);
+    background-color: rgba(255, 255, 255, 0.03);
+  }
+
   .form-group input[type="text"]:focus,
   .form-group input[type="number"]:focus {
     border-color: #3B5BFF;
     background-color: rgba(255, 255, 255, 0.04);
     box-shadow: 0 0 10px rgba(59, 91, 255, 0.15);
+  }
+
+  .form-group input[type="text"]:focus:hover,
+  .form-group input[type="number"]:focus:hover {
+    border-color: #3B5BFF;
+    background-color: rgba(255, 255, 255, 0.04);
+  }
+
+  .form-group select {
+    background-color: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 10px;
+    padding: 10px 36px 10px 14px;
+    color: #E3E3E6;
+    font-size: 14px;
+    outline: none;
+    transition: all 0.2s ease;
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%238C8E96' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 14px center;
+    background-size: 16px;
+    cursor: pointer;
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  .form-group select:hover {
+    border-color: rgba(255, 255, 255, 0.16);
+    background-color: rgba(255, 255, 255, 0.03);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23A4B4FF' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+  }
+
+  .form-group select:focus {
+    border-color: #3B5BFF;
+    background-color: rgba(255, 255, 255, 0.04);
+    box-shadow: 0 0 10px rgba(59, 91, 255, 0.15);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%233B5BFF' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+  }
+
+  .form-group select:focus:hover {
+    border-color: #3B5BFF;
+    background-color: rgba(255, 255, 255, 0.04);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%233B5BFF' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+  }
+
+  .form-group select option {
+    background-color: #0d0e12;
+    color: #E3E3E6;
   }
 
   .checkbox-group {
@@ -1914,6 +1872,64 @@
     transform: translateY(0) scale(0.98);
   }
 
+  .save-status-container {
+    min-height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    margin-top: 4px;
+  }
+
+  .save-status-message {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    font-weight: 500;
+    transform-origin: left center;
+  }
+
+  .save-status-message.saving {
+    color: #8C8E96;
+  }
+
+  .save-status-message.success {
+    color: #3BFF8A;
+  }
+
+  .save-status-message.error {
+    color: #FF5C5C;
+  }
+
+  .status-icon-check {
+    width: 14px;
+    height: 14px;
+    color: #3BFF8A;
+    flex-shrink: 0;
+  }
+
+  .status-icon-error {
+    width: 14px;
+    height: 14px;
+    color: #FF5C5C;
+    flex-shrink: 0;
+  }
+
+  .spinner-small {
+    width: 12px;
+    height: 12px;
+    border: 2px solid rgba(255, 255, 255, 0.1);
+    border-top: 2px solid #3B5BFF;
+    border-radius: 50%;
+    animation: spin-status 0.8s linear infinite;
+    flex-shrink: 0;
+  }
+
+  @keyframes spin-status {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+  }
+
   @media (max-width: 768px) {
     .sidebar {
       width: 64px;
@@ -1939,5 +1955,427 @@
     .content-area {
       padding: 20px;
     }
+    .sidebar-devices-container {
+      display: none;
+    }
+  }
+
+  /* Settings Drawer Styles */
+  .settings-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+    backdrop-filter: blur(8px);
+    z-index: 99;
+  }
+
+  .settings-drawer {
+    position: fixed;
+    top: 0;
+    right: 0;
+    width: min(380px, 100vw);
+    height: 100vh;
+    background: rgba(13, 14, 18, 0.65);
+    backdrop-filter: blur(30px) saturate(180%);
+    -webkit-backdrop-filter: blur(30px) saturate(180%);
+    border-left: 1px solid rgba(255, 255, 255, 0.08);
+    box-shadow: 
+      -10px 0 40px rgba(0, 0, 0, 0.5),
+      inset 1px 0 0 rgba(255, 255, 255, 0.05);
+    z-index: 100;
+    transform: translateX(100%);
+    transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+    display: flex;
+    flex-direction: column;
+    box-sizing: border-box;
+    padding: 24px;
+  }
+
+  .settings-drawer.open {
+    transform: translateX(0);
+  }
+
+  .drawer-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 24px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    padding-bottom: 16px;
+  }
+
+  .drawer-header h3 {
+    margin: 0;
+    font-size: 20px;
+    font-weight: 700;
+    color: #FFFFFF;
+  }
+
+  .close-drawer-btn {
+    background: none;
+    border: none;
+    color: #8C8E96;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 6px;
+    border-radius: 8px;
+    transition: all 0.2s;
+  }
+
+  .close-drawer-btn:hover {
+    background: rgba(255, 255, 255, 0.06);
+    color: #FFFFFF;
+  }
+
+  .close-drawer-btn svg {
+    width: 18px;
+    height: 18px;
+  }
+
+  .drawer-content {
+    flex: 1;
+    overflow-y: auto;
+    min-height: 0;
+  }
+
+  /* Settings Trigger Button Glow & Spin effect */
+  .settings-trigger-btn {
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.02);
+    position: relative;
+    overflow: hidden;
+  }
+  .settings-trigger-btn:hover {
+    border-color: rgba(59, 91, 255, 0.4);
+    background: rgba(59, 91, 255, 0.06);
+    box-shadow: 0 0 12px rgba(59, 91, 255, 0.15);
+  }
+  .settings-trigger-btn:hover .nav-icon {
+    transform: rotate(45deg);
+    color: #A4B4FF;
+  }
+
+  .nav-icon {
+    width: 18px;
+    height: 18px;
+    flex: 0 0 18px;
+    transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), color 0.2s ease;
+  }
+
+  /* Sidebar layout adjustment for scrolling list */
+  .sidebar {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    height: 100%;
+  }
+
+  /* Sidebar Devices styles */
+  .sidebar-devices-container {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0; /* Important for flex child overflow */
+    margin-top: 20px;
+    border-top: 1px solid rgba(255, 255, 255, 0.05);
+    padding-top: 16px;
+  }
+
+  .sidebar-devices-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    color: #8C8E96;
+    margin-bottom: 12px;
+    padding: 0 4px;
+  }
+
+  .device-count-badge {
+    background: rgba(59, 91, 255, 0.15);
+    color: #A4B4FF;
+    padding: 1px 6px;
+    border-radius: 8px;
+    font-size: 9px;
+  }
+
+  .sidebar-devices-list {
+    flex: 1;
+    overflow-y: auto; /* Scrollbar only on overflow */
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding-right: 4px;
+    scrollbar-width: thin; /* Thin scrollbar for Firefox */
+  }
+
+  /* Custom scrollbar for WebKit */
+  .sidebar-devices-list::-webkit-scrollbar {
+    width: 4px;
+  }
+  .sidebar-devices-list::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .sidebar-devices-list::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 2px;
+  }
+  .sidebar-devices-list::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.12);
+  }
+
+  .sidebar-device-card {
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 12px;
+    padding: 8px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    transition: all 0.2s ease;
+  }
+
+  .sidebar-device-card:hover {
+    background: rgba(255, 255, 255, 0.04);
+    border-color: rgba(91, 123, 255, 0.15);
+  }
+
+  .sidebar-device-main {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .sidebar-device-details {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .sidebar-device-alias-input {
+    width: 100%;
+    border: 1px solid transparent;
+    background: transparent;
+    color: #E3E3E6;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 1px 2px;
+    margin: 0;
+    outline: none;
+    border-radius: 4px;
+    text-overflow: ellipsis;
+  }
+
+  .sidebar-device-alias-input:hover {
+    background: rgba(255, 255, 255, 0.04);
+    border-color: rgba(255, 255, 255, 0.08);
+  }
+
+  .sidebar-device-alias-input:focus {
+    background: rgba(0, 0, 0, 0.25);
+    border-color: rgba(59, 91, 255, 0.4);
+  }
+
+  .sidebar-device-os-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .sidebar-device-os {
+    font-size: 9px;
+    font-weight: 700;
+    color: #8C8E96;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .sidebar-device-ip-info {
+    font-size: 9px;
+    color: #A4B4FF;
+    font-family: 'JetBrains Mono', monospace;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .sidebar-status-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background-color: #FF5C5C;
+    flex-shrink: 0;
+  }
+
+  .sidebar-status-dot.online {
+    background-color: #3BFF8A;
+    box-shadow: 0 0 6px #3BFF8A;
+  }
+
+  .sidebar-device-controls {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-top: 1px solid rgba(255, 255, 255, 0.04);
+    padding-top: 6px;
+  }
+
+  .sidebar-mcp-container {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .compact-mcp-label {
+    font-size: 9px;
+    font-weight: 600;
+    color: #8C8E96;
+  }
+
+  .sidebar-unpair-btn {
+    background: none;
+    border: none;
+    color: #FF8F8F;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 3px;
+    border-radius: 4px;
+    transition: all 0.2s;
+  }
+
+  .sidebar-unpair-btn:hover {
+    background: rgba(255, 92, 92, 0.08);
+    color: #FF5C5C;
+  }
+
+  .sidebar-unpair-btn svg {
+    width: 11px;
+    height: 11px;
+  }
+
+  .sidebar-empty-devices {
+    font-size: 11px;
+    color: #5C5D64;
+    text-align: center;
+    padding: 16px 8px;
+    border: 1px dashed rgba(255, 255, 255, 0.03);
+    border-radius: 8px;
+  }
+
+  /* Compact switch toggle */
+  .compact-switch {
+    position: relative;
+    display: inline-block;
+    width: 24px;
+    height: 14px;
+  }
+
+  .compact-switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+  }
+
+  .compact-slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.04);
+    transition: .2s ease;
+  }
+
+  .compact-slider:before {
+    position: absolute;
+    content: "";
+    height: 8px;
+    width: 8px;
+    left: 2px;
+    bottom: 2px;
+    background-color: #8C8E96;
+    transition: .2s ease;
+  }
+
+  .compact-switch input:checked + .compact-slider {
+    background-color: rgba(59, 91, 255, 0.2);
+    border-color: rgba(59, 91, 255, 0.3);
+  }
+
+  .compact-switch input:checked + .compact-slider:before {
+    transform: translateX(10px);
+    background-color: #3B5BFF;
+  }
+
+  .compact-slider.round {
+    border-radius: 10px;
+  }
+
+  .compact-slider.round:before {
+    border-radius: 50%;
+  }
+
+  /* Manual IP QR pairing input form styles */
+  .manual-ip-section {
+    width: 100%;
+    margin-bottom: 20px;
+  }
+
+  .manual-ip-form {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: 100%;
+  }
+
+  .manual-ip-input-container {
+    display: flex;
+    gap: 8px;
+    width: 100%;
+  }
+
+  .manual-ip-input {
+    flex: 1;
+    min-width: 0;
+    background-color: rgba(0, 0, 0, 0.25);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 10px;
+    padding: 8px 12px;
+    color: #E3E3E6;
+    font-size: 12px;
+    outline: none;
+    transition: all 0.2s ease;
+  }
+
+  .manual-ip-input:focus {
+    border-color: #3B5BFF;
+    background-color: rgba(0, 0, 0, 0.35);
+  }
+
+  .manual-ip-btn {
+    background-color: #3B5BFF;
+    color: #FFFFFF;
+    border: none;
+    border-radius: 10px;
+    padding: 8px 16px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+
+  .manual-ip-btn:hover {
+    background-color: #5C77FF;
   }
 </style>

@@ -17,6 +17,25 @@ fn is_valid_request_id(id: &str) -> bool {
             .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
 }
 
+fn is_private_ip(ip: std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(ipv4) => {
+            ipv4.is_loopback() || ipv4.is_private() || ipv4.is_link_local()
+        }
+        std::net::IpAddr::V6(ipv6) => {
+            if let Some(ipv4) = ipv6.to_ipv4_mapped() {
+                ipv4.is_loopback() || ipv4.is_private() || ipv4.is_link_local()
+            } else if let Some(ipv4) = ipv6.to_ipv4() {
+                ipv4.is_loopback() || ipv4.is_private() || ipv4.is_link_local()
+            } else {
+                ipv6.is_loopback()
+                    || (ipv6.segments()[0] & 0xfe00) == 0xfc00 // fc00::/7
+                    || (ipv6.segments()[0] & 0xffc0) == 0xfe80 // fe80::/10
+            }
+        }
+    }
+}
+
 #[derive(Clone)]
 struct IntermediatePairing {
     pubkey_phone: [u8; 32],
@@ -41,9 +60,18 @@ impl SocketHandler {
     // Top-level WS handler spawned per-client
     pub async fn handle_socket(
         socket: WebSocket,
+        addr: std::net::SocketAddr,
         state: AppState,
         app_handle: Option<tauri::AppHandle>,
     ) {
+        let ip_addr = addr.ip();
+        let ip_str = ip_addr.to_string();
+        let channel_str = if is_private_ip(ip_addr) {
+            "Local".to_string()
+        } else {
+            "Internet".to_string()
+        };
+
         let (mut sender, mut receiver) = socket.split();
         let (tx, mut rx) = tokio::sync::mpsc::channel::<Message>(100);
 
@@ -57,10 +85,31 @@ impl SocketHandler {
         });
 
         let mut authenticated_device_id: Option<String> = None;
+        let mut active_session_id: Option<String> = None;
         let mut pairing_state: Option<PairingFlowState> = None;
 
         // Reading WebSocket messages loop
-        while let Some(Ok(msg)) = receiver.next().await {
+        loop {
+            let next_msg = tokio::time::timeout(
+                std::time::Duration::from_secs(20),
+                receiver.next()
+            ).await;
+
+            let msg = match next_msg {
+                Ok(Some(Ok(msg))) => msg,
+                Ok(Some(Err(e))) => {
+                    tracing::error!("WebSocket read error: {:?}", e);
+                    break;
+                }
+                Ok(None) => {
+                    break;
+                }
+                Err(_) => {
+                    tracing::warn!("WebSocket read timeout (20 seconds), client likely dropped connection");
+                    break;
+                }
+            };
+
             #[allow(clippy::collapsible_match)]
             match msg {
                 Message::Text(text) => {
@@ -93,6 +142,8 @@ impl SocketHandler {
 
                                 if valid {
                                     authenticated_device_id = Some(device_id.to_string());
+                                    let session_id = ulid::Ulid::new().to_string();
+                                    active_session_id = Some(session_id.clone());
 
                                     // Register active session
                                     let device_name = {
@@ -100,9 +151,12 @@ impl SocketHandler {
                                         inner.paired_devices.get(device_id).unwrap().name.clone()
                                     };
                                     state.register_session(
+                                        session_id.clone(),
                                         device_id.to_string(),
                                         device_name.clone(),
                                         tx.clone(),
+                                        ip_str.clone(),
+                                        channel_str.clone(),
                                     );
 
                                     // Emit devices-changed event
@@ -115,7 +169,7 @@ impl SocketHandler {
                                         envelope.id,
                                         json!({
                                             "status": "authorized",
-                                            "session_id": ulid::Ulid::new().to_string()
+                                            "session_id": session_id
                                         }),
                                     );
                                     let _ = tx
@@ -460,10 +514,15 @@ impl SocketHandler {
                                 }
 
                                 authenticated_device_id = Some(device_id.clone());
+                                let session_id = ulid::Ulid::new().to_string();
+                                active_session_id = Some(session_id.clone());
                                 state.register_session(
+                                    session_id,
                                     device_id.clone(),
                                     pair.device_name.clone(),
                                     tx.clone(),
+                                    ip_str.clone(),
+                                    channel_str.clone(),
                                 );
 
                                 if let Some(h) = &app_handle {
@@ -722,12 +781,12 @@ impl SocketHandler {
         }
 
         // Clean up connections on socket drops
-        if let Some(device_id) = authenticated_device_id {
-            state.unregister_session(&device_id);
+        if let (Some(device_id), Some(session_id)) = (authenticated_device_id, active_session_id) {
+            state.unregister_session(&device_id, &session_id);
             if let Some(h) = &app_handle {
                 let _ = h.emit("devices-changed", ());
             }
-            tracing::info!("WebSocket connection closed for device: {}", device_id);
+            tracing::info!("WebSocket connection closed for device: {} (session: {})", device_id, session_id);
         }
 
         sender_task.abort();
