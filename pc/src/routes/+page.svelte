@@ -29,6 +29,7 @@
   let settingsTab = $state<"general" | "network">("general");
   let manualIpInput = $state("");
   let firewallStatus = $state("");
+  let appReady = $state(false);
 
   // Custom Confirmation Modal State
   let showConfirmModal = $state(false);
@@ -248,6 +249,9 @@
 
       await loadView(initialView);
       await loadPairedDevices();
+      setTimeout(() => {
+        appReady = true;
+      }, 350);
 
       unlistenPairingStatus = await listen("pairing-status", (event: any) => {
         pairingStatus = event.payload;
@@ -337,6 +341,26 @@
 </script>
 
 <main class="app-container theme-dark">
+  {#if !appReady}
+    <div class="loader-overlay" transition:fade={{ duration: 350 }}>
+      <div class="loader-container">
+        <div class="loader-logo" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10" />
+            <line x1="14.31" y1="8" x2="20.05" y2="17.94" />
+            <line x1="9.69" y1="8" x2="21.17" y2="8" />
+            <line x1="7.38" y1="12" x2="13.12" y2="2.06" />
+            <line x1="9.69" y1="16" x2="3.95" y2="6.06" />
+            <line x1="14.31" y1="16" x2="2.83" y2="16" />
+            <line x1="16.62" y1="12" x2="10.88" y2="21.94" />
+          </svg>
+        </div>
+        <div class="loader-spinner-bar"></div>
+        <span class="loader-text">Starting CapturePort...</span>
+      </div>
+    </div>
+  {/if}
+
   <div class="dashboard animate-fade">
     <nav class="sidebar">
       <div class="logo-area">
@@ -493,138 +517,142 @@
 
       {:else if windowLabel === "pairing"}
         <div class="pairing-content">
-          <div class="panel pairing-panel">
-            <header class="panel-header">
-              <div class="panel-title">
-                <span class="title-icon" aria-hidden="true">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                    <rect x="7" y="2.5" width="10" height="19" rx="2.5" />
-                    <path d="M10 6.5h4" />
-                    <circle cx="12" cy="17.5" r="1" fill="currentColor" stroke="none" />
-                  </svg>
-                </span>
-                <h2>Pair New Device</h2>
-              </div>
-              <p>Scan this QR code from the CapturePort app on your phone</p>
-            </header>
+          <div class="pairing-columns">
+            <div class="panel pairing-panel">
+              <header class="panel-header">
+                <div class="panel-title">
+                  <span class="title-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                      <rect x="7" y="2.5" width="10" height="19" rx="2.5" />
+                      <path d="M10 6.5h4" />
+                      <circle cx="12" cy="17.5" r="1" fill="currentColor" stroke="none" />
+                    </svg>
+                  </span>
+                  <h2>Pair New Device</h2>
+                </div>
+                <p>Scan this QR code from the CapturePort app on your phone</p>
+              </header>
 
-            <!-- svelte-ignore a11y_click_events_have_key_events -->
-            <!-- svelte-ignore a11y_no_static_element_interactions -->
-            <div class="qr-polaroid" onclick={refreshPairingInfo} title="Click to refresh QR Code">
-              <div class="qr-photo-area">
-                {#if pairingQr}
-                  <img src={pairingQr} class="qr-graphic-img" alt="Pairing QR Code" />
-                {:else}
-                  <div class="qr-placeholder spinner"></div>
+              <!-- svelte-ignore a11y_click_events_have_key_events -->
+              <!-- svelte-ignore a11y_no_static_element_interactions -->
+              <div class="qr-polaroid" onclick={refreshPairingInfo} title="Click to refresh QR Code">
+                <div class="qr-photo-area">
+                  {#if pairingQr}
+                    <img src={pairingQr} class="qr-graphic-img" alt="Pairing QR Code" />
+                  {:else}
+                    <div class="qr-placeholder spinner"></div>
+                  {/if}
+                </div>
+                <div class="qr-polaroid-caption">
+                  <span class="caption-title">Scan to Pair</span>
+                  <span class="caption-subtitle">Click to refresh</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="panel pairing-panel">
+              <div class="endpoint-mode-group" aria-label="QR endpoint mode">
+                <button class:active={pairingEndpointMode === "local-only"} onclick={() => setPairingEndpointMode("local-only")}>Local only</button>
+                <button class:active={pairingEndpointMode === "local-then-internet"} onclick={() => setPairingEndpointMode("local-then-internet")}>Local + Internet</button>
+                <button class:active={pairingEndpointMode === "internet-only"} onclick={() => setPairingEndpointMode("internet-only")}>Internet only</button>
+              </div>
+
+              <div class="manual-ip-section">
+                <form class="manual-ip-form" onsubmit={(e) => { e.preventDefault(); addManualIp(); }}>
+                  <div class="manual-ip-input-container">
+                    <input
+                      type="text"
+                      placeholder="Enter PC IP manually (e.g. 192.168.1.50)"
+                      bind:value={manualIpInput}
+                      class="manual-ip-input"
+                    />
+                    <button type="submit" class="manual-ip-btn">Set</button>
+                  </div>
+                </form>
+              </div>
+
+              <div class="connection-details-card">
+                {#if pairingFingerprint}
+                  <div class="detail-section">
+                    <div class="detail-label-row">
+                      <span class="detail-label-title">
+                        <svg class="icon-small" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                          <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                          <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                        </svg>
+                        Device Fingerprint
+                      </span>
+                      <button class="copy-action-btn" onclick={() => copyToClipboard(pairingFingerprint, 'fingerprint')} title="Copy fingerprint">
+                        {#if copyTarget === 'fingerprint'}
+                          <span class="copied-indicator animate-scale">Copied!</span>
+                        {:else}
+                          <svg class="copy-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                          </svg>
+                        {/if}
+                      </button>
+                    </div>
+                    <div class="detail-value-box">
+                      <code class="mono-text">{pairingFingerprint}</code>
+                    </div>
+                  </div>
+                {/if}
+
+                {#if pairingFingerprint && pairingHosts.length > 0}
+                  <div class="detail-divider"></div>
+                {/if}
+
+                {#if pairingHosts.length > 0}
+                  <div class="detail-section">
+                    <div class="detail-label-row">
+                      <span class="detail-label-title">
+                        <svg class="icon-small" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                          <rect x="2" y="2" width="20" height="8" rx="2" ry="2"/>
+                          <rect x="2" y="14" width="20" height="8" rx="2" ry="2"/>
+                          <line x1="6" y1="6" x2="6.01" y2="6"/>
+                          <line x1="6" y1="18" x2="6.01" y2="18"/>
+                        </svg>
+                        Manual IP Addresses
+                      </span>
+                    </div>
+                    <div class="ip-addresses-list">
+                      {#each pairingHosts as host}
+                        <div class="ip-address-row">
+                          <code class="mono-text-blue">{host}:{host === pairingInternetHost ? pairingInternetPort : settings.port}</code>
+                          <button class="copy-action-btn-small" onclick={() => copyToClipboard(`${host}:${host === pairingInternetHost ? pairingInternetPort : settings.port}`, host)} title="Copy Address">
+                            {#if copyTarget === host}
+                              <span class="copied-indicator-small animate-scale">Copied!</span>
+                            {:else}
+                              <svg class="copy-icon-small" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                              </svg>
+                            {/if}
+                          </button>
+                        </div>
+                      {/each}
+                    </div>
+                  </div>
                 {/if}
               </div>
-              <div class="qr-polaroid-caption">
-                <span class="caption-title">Scan to Pair</span>
-                <span class="caption-subtitle">Click to refresh</span>
-              </div>
-            </div>
 
-            <div class="endpoint-mode-group" aria-label="QR endpoint mode">
-              <button class:active={pairingEndpointMode === "local-only"} onclick={() => setPairingEndpointMode("local-only")}>Local only</button>
-              <button class:active={pairingEndpointMode === "local-then-internet"} onclick={() => setPairingEndpointMode("local-then-internet")}>Local + Internet</button>
-              <button class:active={pairingEndpointMode === "internet-only"} onclick={() => setPairingEndpointMode("internet-only")}>Internet only</button>
-            </div>
-
-            <div class="manual-ip-section">
-              <form class="manual-ip-form" onsubmit={(e) => { e.preventDefault(); addManualIp(); }}>
-                <div class="manual-ip-input-container">
-                  <input
-                    type="text"
-                    placeholder="Enter PC IP manually (e.g. 192.168.1.50)"
-                    bind:value={manualIpInput}
-                    class="manual-ip-input"
-                  />
-                  <button type="submit" class="manual-ip-btn">Set</button>
-                </div>
-              </form>
-            </div>
-
-            <div class="connection-details-card">
-              {#if pairingFingerprint}
-                <div class="detail-section">
-                  <div class="detail-label-row">
-                    <span class="detail-label-title">
-                      <svg class="icon-small" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
-                        <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
-                      </svg>
-                      Device Fingerprint
-                    </span>
-                    <button class="copy-action-btn" onclick={() => copyToClipboard(pairingFingerprint, 'fingerprint')} title="Copy fingerprint">
-                      {#if copyTarget === 'fingerprint'}
-                        <span class="copied-indicator animate-scale">Copied!</span>
-                      {:else}
-                        <svg class="copy-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                          <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
-                          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
-                        </svg>
-                      {/if}
-                    </button>
-                  </div>
-                  <div class="detail-value-box">
-                    <code class="mono-text">{pairingFingerprint}</code>
-                  </div>
+              {#if pairedDevices.length > 0}
+                <div class="pairing-warning">
+                  <p><strong>Notice:</strong> PC is already paired. Scanning will update pairing or add a new device.</p>
+                  <button class="action-btn text-danger" onclick={regenerateIdentity}>
+                    Regenerate PC Identity
+                  </button>
                 </div>
               {/if}
 
-              {#if pairingFingerprint && pairingHosts.length > 0}
-                <div class="detail-divider"></div>
-              {/if}
-
-              {#if pairingHosts.length > 0}
-                <div class="detail-section">
-                  <div class="detail-label-row">
-                    <span class="detail-label-title">
-                      <svg class="icon-small" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <rect x="2" y="2" width="20" height="8" rx="2" ry="2"/>
-                        <rect x="2" y="14" width="20" height="8" rx="2" ry="2"/>
-                        <line x1="6" y1="6" x2="6.01" y2="6"/>
-                        <line x1="6" y1="18" x2="6.01" y2="18"/>
-                      </svg>
-                      Manual IP Addresses
-                    </span>
-                  </div>
-                  <div class="ip-addresses-list">
-                    {#each pairingHosts as host}
-                      <div class="ip-address-row">
-                        <code class="mono-text-blue">{host}:{host === pairingInternetHost ? pairingInternetPort : settings.port}</code>
-                        <button class="copy-action-btn-small" onclick={() => copyToClipboard(`${host}:${host === pairingInternetHost ? pairingInternetPort : settings.port}`, host)} title="Copy Address">
-                          {#if copyTarget === host}
-                            <span class="copied-indicator-small animate-scale">Copied!</span>
-                          {:else}
-                            <svg class="copy-icon-small" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
-                              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
-                            </svg>
-                          {/if}
-                        </button>
-                      </div>
-                    {/each}
-                  </div>
+              <footer class="pairing-footer">
+                <div class="status-indicator">
+                  <span class="pulse-dot"></span>
+                  <span class="status-text">{pairingStatus}</span>
                 </div>
-              {/if}
+              </footer>
             </div>
-
-            {#if pairedDevices.length > 0}
-              <div class="pairing-warning">
-                <p><strong>Notice:</strong> PC is already paired. Scanning will update pairing or add a new device.</p>
-                <button class="action-btn text-danger" onclick={regenerateIdentity}>
-                  Regenerate PC Identity
-                </button>
-              </div>
-            {/if}
-
-            <footer class="pairing-footer">
-              <div class="status-indicator">
-                <span class="pulse-dot"></span>
-                <span class="status-text">{pairingStatus}</span>
-              </div>
-            </footer>
           </div>
         </div>
       {:else if windowLabel === "settings"}
@@ -814,6 +842,90 @@
       radial-gradient(at 0% 100%, rgba(139, 92, 246, 0.02) 0px, transparent 40%);
     position: relative;
     overflow: hidden;
+  }
+
+  /* Loader Overlay Styles */
+  .loader-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: #08090c;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 99999;
+  }
+
+  .loader-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 24px;
+  }
+
+  .loader-logo {
+    width: 64px;
+    height: 64px;
+    color: #3B5BFF;
+    animation: loaderPulse 2s ease-in-out infinite, loaderRotate 15s linear infinite;
+    filter: drop-shadow(0 0 15px rgba(59, 91, 255, 0.4));
+  }
+
+  .loader-logo svg {
+    width: 100%;
+    height: 100%;
+  }
+
+  .loader-spinner-bar {
+    width: 140px;
+    height: 3px;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 2px;
+    overflow: hidden;
+    position: relative;
+  }
+
+  .loader-spinner-bar::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    height: 100%;
+    width: 50%;
+    background: #3B5BFF;
+    border-radius: 2px;
+    animation: loaderProgress 1.2s cubic-bezier(0.65, 0.05, 0.36, 1) infinite;
+    box-shadow: 0 0 8px #3B5BFF;
+  }
+
+  .loader-text {
+    font-family: 'Plus Jakarta Sans', sans-serif;
+    font-size: 13px;
+    color: #8c8e96;
+    font-weight: 500;
+    letter-spacing: 0.5px;
+    animation: loaderTextPulse 1.5s ease-in-out infinite;
+  }
+
+  @keyframes loaderPulse {
+    0%, 100% { transform: scale(1); filter: drop-shadow(0 0 12px rgba(59, 91, 255, 0.3)); }
+    50% { transform: scale(1.05); filter: drop-shadow(0 0 24px rgba(59, 91, 255, 0.6)); }
+  }
+
+  @keyframes loaderRotate {
+    100% { transform: rotate(360deg); }
+  }
+
+  @keyframes loaderProgress {
+    0% { left: -50%; }
+    100% { left: 100%; }
+  }
+
+  @keyframes loaderTextPulse {
+    0%, 100% { opacity: 0.6; }
+    50% { opacity: 1; }
   }
 
   /* Vector animations and typography */
