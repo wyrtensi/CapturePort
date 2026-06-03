@@ -355,6 +355,15 @@ fun ReceiversScreen(
                         Icon(
                             imageVector = Icons.Default.Add,
                             contentDescription = "Add",
+                            tint = Color.White,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Add & Pair a New PC",
+                            color = Color.White,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold
                         )
                     }
                 }
@@ -411,7 +420,7 @@ fun ReceiversScreen(
             ) {
                 Icon(
                     imageVector = if (showSettingsMenu) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
-                    contentDescription = "Toggle settings",
+                    contentDescription = "Receiver settings",
                     tint = Color.White.copy(alpha = 0.4f),
                     modifier = Modifier.size(24.dp)
                 )
