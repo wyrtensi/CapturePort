@@ -853,6 +853,7 @@
   .pairing-panel {
     flex: 1 1 340px;
     min-width: 320px;
+    margin: auto;
     background: rgba(13, 14, 18, 0.45);
     backdrop-filter: blur(24px) saturate(150%);
     -webkit-backdrop-filter: blur(24px) saturate(150%);
@@ -868,6 +869,10 @@
       0 24px 48px rgba(0, 0, 0, 0.4);
     box-sizing: border-box;
     transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .pairing-panel > * {
+    flex-shrink: 0;
   }
 
   .pairing-panel:hover {
@@ -1335,10 +1340,11 @@
 
   @media (max-width: 860px) {
     .pairing-content {
-      align-items: stretch;
-      justify-content: flex-start;
+      align-items: center;
+      justify-content: center;
       padding: 16px;
       max-height: calc(100vh - 48px);
+      overflow-y: hidden;
     }
 
     .pairing-columns {
@@ -1353,6 +1359,8 @@
     .pairing-panel {
       min-width: 0;
       max-width: none;
+      max-height: 100%;
+      margin: auto;
       padding: 18px;
       border-radius: 20px;
       box-shadow:

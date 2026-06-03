@@ -216,60 +216,7 @@ fun ReceiversScreen(
                 )
         )
 
-        // Top HUD Area
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .statusBarsPadding()
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            // Left side — REC timer (or empty weight to keep gear right)
-            Row(
-                modifier = Modifier.weight(1f),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                if (isRecording) {
-                    val infiniteTransition = rememberInfiniteTransition()
-                    val dotAlpha by infiniteTransition.animateFloat(
-                        initialValue = 1f, targetValue = 0.2f,
-                        animationSpec = infiniteRepeatable(tween(1000, easing = LinearEasing), RepeatMode.Reverse)
-                    )
-                    Row(
-                        modifier = Modifier
-                            .background(Color(0x99FF3B30), RoundedCornerShape(16.dp))
-                            .padding(horizontal = 10.dp, vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(Color.White.copy(alpha = dotAlpha)))
-                        Spacer(modifier = Modifier.width(5.dp))
-                        Text(
-                            text = "REC ${formatDuration(recordingDuration)}",
-                            color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace
-                        )
-                    }
-                }
-            }
-
-            // Right side — settings gear
-            IconButton(
-                onClick = { showSettingsMenu = true },
-                colors = IconButtonDefaults.iconButtonColors(containerColor = Color(0xD91F2128)),
-                modifier = Modifier
-                    .size(42.dp)
-                    .border(1.dp, Color(0xFF2C2E35), CircleShape)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Settings,
-                    contentDescription = "Receiver settings",
-                    tint = Color.White,
-                    modifier = Modifier.size(18.dp)
-                )
-            }
-        }
-
-        // ── Settings bottom sheet overlay ──
+        // ── Settings dropdown overlay ──
         AnimatedVisibility(
             visible = showSettingsMenu,
             enter = fadeIn(animationSpec = tween(250)),
@@ -288,32 +235,23 @@ fun ReceiversScreen(
 
         AnimatedVisibility(
             visible = showSettingsMenu,
-            modifier = Modifier.align(Alignment.BottomCenter),
-            enter = slideInVertically(animationSpec = tween(300, easing = FastOutSlowInEasing)) { it } + fadeIn(tween(200)),
-            exit = slideOutVertically(animationSpec = tween(250, easing = FastOutSlowInEasing)) { it } + fadeOut(tween(150))
+            modifier = Modifier.align(Alignment.TopCenter),
+            enter = slideInVertically(animationSpec = tween(300, easing = FastOutSlowInEasing)) { -it } + fadeIn(tween(200)),
+            exit = slideOutVertically(animationSpec = tween(250, easing = FastOutSlowInEasing)) { -it } + fadeOut(tween(150))
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .navigationBarsPadding()
-                    .clip(RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp))
+                    .statusBarsPadding()
+                    .clip(RoundedCornerShape(bottomStart = 24.dp, bottomEnd = 24.dp))
                     .background(Color(0xF2101114))
                     .border(
                         BorderStroke(1.dp, Color(0x1AFFFFFF)),
-                        RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
+                        RoundedCornerShape(bottomStart = 24.dp, bottomEnd = 24.dp)
                     )
-                    .padding(bottom = 16.dp),
+                    .padding(top = 64.dp, bottom = 16.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                // Drag handle
-                Box(
-                    modifier = Modifier
-                        .padding(top = 10.dp, bottom = 16.dp)
-                        .width(36.dp)
-                        .height(4.dp)
-                        .clip(RoundedCornerShape(2.dp))
-                        .background(Color(0x4DFFFFFF))
-                )
 
                 // Camera mode section
                 Text(
@@ -417,18 +355,66 @@ fun ReceiversScreen(
                         Icon(
                             imageVector = Icons.Default.Add,
                             contentDescription = "Add",
-                            tint = Color.White,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = "Add & Pair a New PC",
-                            color = Color.White,
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Bold
                         )
                     }
                 }
+
+                // Drag handle at bottom
+                Box(
+                    modifier = Modifier
+                        .padding(top = 16.dp, bottom = 10.dp)
+                        .width(36.dp)
+                        .height(4.dp)
+                        .clip(RoundedCornerShape(2.dp))
+                        .background(Color(0x4DFFFFFF))
+                )
+            }
+        }
+
+        // Top HUD Area (Rendered last to sit on top of the dropdown menu)
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .statusBarsPadding()
+                .padding(horizontal = 16.dp, vertical = 12.dp)
+        ) {
+            // Left side — REC timer
+            if (isRecording) {
+                val infiniteTransition = rememberInfiniteTransition()
+                val dotAlpha by infiniteTransition.animateFloat(
+                    initialValue = 1f, targetValue = 0.2f,
+                    animationSpec = infiniteRepeatable(tween(1000, easing = LinearEasing), RepeatMode.Reverse)
+                )
+                Row(
+                    modifier = Modifier
+                        .align(Alignment.CenterStart)
+                        .background(Color(0x99FF3B30), RoundedCornerShape(16.dp))
+                        .padding(horizontal = 10.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(Color.White.copy(alpha = dotAlpha)))
+                    Spacer(modifier = Modifier.width(5.dp))
+                    Text(
+                        text = "REC ${formatDuration(recordingDuration)}",
+                        color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace
+                    )
+                }
+            }
+
+            // Center — inconspicuous arrow V button
+            IconButton(
+                onClick = { showSettingsMenu = !showSettingsMenu },
+                colors = IconButtonDefaults.iconButtonColors(containerColor = Color.Transparent),
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .size(36.dp)
+            ) {
+                Icon(
+                    imageVector = if (showSettingsMenu) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                    contentDescription = "Toggle settings",
+                    tint = Color.White.copy(alpha = 0.4f),
+                    modifier = Modifier.size(24.dp)
+                )
             }
         }
 
@@ -871,6 +857,8 @@ fun ReceiversScreen(
                         singleLine = true,
                         shape = RoundedCornerShape(12.dp),
                         colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
                             focusedBorderColor = Color(0xFF3B5BFF),
                             unfocusedBorderColor = Color(0xFF2C2E35),
                             focusedLabelColor = Color(0xFF3B5BFF),
@@ -892,6 +880,8 @@ fun ReceiversScreen(
                             }
                         },
                         colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
                             focusedBorderColor = Color(0xFF3B5BFF),
                             unfocusedBorderColor = Color(0xFF2C2E35),
                             focusedLabelColor = Color(0xFF3B5BFF),
@@ -913,6 +903,8 @@ fun ReceiversScreen(
                             }
                         },
                         colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
                             focusedBorderColor = Color(0xFF3B5BFF),
                             unfocusedBorderColor = Color(0xFF2C2E35),
                             focusedLabelColor = Color(0xFF3B5BFF),
@@ -928,6 +920,8 @@ fun ReceiversScreen(
                         singleLine = true,
                         shape = RoundedCornerShape(12.dp),
                         colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
                             focusedBorderColor = Color(0xFF3B5BFF),
                             unfocusedBorderColor = Color(0xFF2C2E35),
                             focusedLabelColor = Color(0xFF3B5BFF),
@@ -949,6 +943,8 @@ fun ReceiversScreen(
                             }
                         },
                         colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
                             focusedBorderColor = Color(0xFF3B5BFF),
                             unfocusedBorderColor = Color(0xFF2C2E35),
                             focusedLabelColor = Color(0xFF3B5BFF),
