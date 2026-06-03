@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.view.PreviewView
@@ -44,6 +45,7 @@ import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -191,6 +193,23 @@ fun ReceiversScreen(
         return String.format("%02d:%02d", mins, secs)
     }
 
+    fun applyCameraMode(policy: CameraCapturePolicy) {
+        if (currentPolicy == policy) return
+        app.applyCameraCapturePolicy(policy)
+        currentPolicy = policy
+    }
+
+    fun applyConnectionMode(mode: ReceiverConnectionMode) {
+        if (receiverConnectionMode == mode) return
+        app.applyReceiverConnectionMode(mode)
+        receiverConnectionMode = mode
+        selectedDevice?.let { app.wsClient?.connect(it) }
+    }
+
+    BackHandler(enabled = showSettingsMenu) {
+        showSettingsMenu = false
+    }
+
     Box(modifier = Modifier.fillMaxSize().background(Color(0xFF101114))) {
         AndroidView(
             factory = { ctx ->
@@ -216,7 +235,7 @@ fun ReceiversScreen(
                 )
         )
 
-        // ── Settings dropdown overlay ──
+        // Settings dropdown overlay
         AnimatedVisibility(
             visible = showSettingsMenu,
             enter = fadeIn(animationSpec = tween(250)),
@@ -225,7 +244,7 @@ fun ReceiversScreen(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color(0x99000000))
+                    .background(Color(0x52000000))
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null
@@ -243,105 +262,112 @@ fun ReceiversScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .statusBarsPadding()
-                    .clip(RoundedCornerShape(bottomStart = 24.dp, bottomEnd = 24.dp))
-                    .background(Color(0xF2101114))
-                    .border(
-                        BorderStroke(1.dp, Color(0x1AFFFFFF)),
-                        RoundedCornerShape(bottomStart = 24.dp, bottomEnd = 24.dp)
+                    .padding(horizontal = 10.dp)
+                    .clip(RoundedCornerShape(bottomStart = 28.dp, bottomEnd = 28.dp))
+                    .background(
+                        brush = Brush.verticalGradient(
+                            colors = listOf(
+                                Color(0xD9101114),
+                                Color(0xB5101114),
+                                Color(0x9E14161C)
+                            )
+                        )
                     )
-                    .padding(top = 64.dp, bottom = 16.dp),
+                    .border(
+                        BorderStroke(1.dp, Color(0x24FFFFFF)),
+                        RoundedCornerShape(bottomStart = 28.dp, bottomEnd = 28.dp)
+                    )
+                    .padding(horizontal = 14.dp, vertical = 14.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-
-                // Camera mode section
-                Text(
-                    text = "Camera Mode",
-                    color = Color(0xFF8C8E96),
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
+                Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 20.dp, vertical = 4.dp)
-                )
-                CameraCapturePolicy.values().forEach { policy ->
-                    val isActive = currentPolicy == policy
-                    Box(
+                        .padding(top = 48.dp, bottom = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Receiver Control",
+                            color = Color.White,
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            maxLines = 1
+                        )
+                        Text(
+                            text = selectedDevice?.let { it.alias.ifBlank { it.name } } ?: "No PC selected",
+                            color = Color(0xA6FFFFFF),
+                            fontSize = 12.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    SettingsStatusPill(
+                        text = connectionState,
+                        isPositive = connectionState == "Connected"
+                    )
+                }
+
+                SettingsSectionCard(
+                    title = "Camera capture",
+                    caption = if (currentPolicy == CameraCapturePolicy.ScreenOnly) {
+                        "Remote requests work while this screen is visible."
+                    } else {
+                        "Capture can keep serving while the app is in background."
+                    }
+                ) {
+                    Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 3.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(if (isActive) Color(0x263B5BFF) else Color.Transparent)
-                            .clickable {
-                                app.applyCameraCapturePolicy(policy)
-                                currentPolicy = policy
-                                showSettingsMenu = false
-                            }
-                            .padding(horizontal = 16.dp, vertical = 12.dp)
+                            .padding(top = 10.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Text(
-                            text = policy.label,
-                            color = if (isActive) Color(0xFFA4B4FF) else Color.White,
-                            fontSize = 14.sp,
-                            fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal
-                        )
+                        CameraCapturePolicy.values().forEach { policy ->
+                            SettingsChoiceTile(
+                                title = policy.label.removePrefix("Camera: ").replaceFirstChar { it.uppercase() },
+                                subtitle = if (policy == CameraCapturePolicy.ScreenOnly) "Visible only" else "Background",
+                                active = currentPolicy == policy,
+                                modifier = Modifier.weight(1f),
+                                onClick = { applyCameraMode(policy) }
+                            )
+                        }
                     }
                 }
 
-                // Divider
-                HorizontalDivider(
-                    color = Color(0x1AFFFFFF),
-                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
-                )
+                Spacer(modifier = Modifier.height(10.dp))
 
-                // Connection mode section
-                Text(
-                    text = "Connection Mode",
-                    color = Color(0xFF8C8E96),
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 20.dp, vertical = 4.dp)
-                )
-                ReceiverConnectionMode.values().forEach { mode ->
-                    val isActive = receiverConnectionMode == mode
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 3.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(if (isActive) Color(0x263B5BFF) else Color.Transparent)
-                            .clickable {
-                                app.applyReceiverConnectionMode(mode)
-                                receiverConnectionMode = mode
-                                showSettingsMenu = false
-                            }
-                            .padding(horizontal = 16.dp, vertical = 12.dp)
+                SettingsSectionCard(
+                    title = "Connection route",
+                    caption = "Changing this route reconnects the selected PC immediately."
+                ) {
+                    Column(
+                        modifier = Modifier.padding(top = 10.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Text(
-                            text = mode.label,
-                            color = if (isActive) Color(0xFFA4B4FF) else Color.White,
-                            fontSize = 14.sp,
-                            fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal
-                        )
+                        ReceiverConnectionMode.values().forEach { mode ->
+                            ConnectionModeRow(
+                                title = mode.label,
+                                subtitle = when (mode) {
+                                    ReceiverConnectionMode.LocalOnly -> "Use only LAN addresses from QR or discovery."
+                                    ReceiverConnectionMode.LocalThenInternet -> "Try local first, then fall back to internet."
+                                    ReceiverConnectionMode.InternetOnly -> "Use only DDNS or public endpoint."
+                                },
+                                active = receiverConnectionMode == mode,
+                                onClick = { applyConnectionMode(mode) }
+                            )
+                        }
                     }
                 }
 
-                // Divider
-                HorizontalDivider(
-                    color = Color(0x1AFFFFFF),
-                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
-                )
+                Spacer(modifier = Modifier.height(12.dp))
 
-                // Add & Pair button
-                Box(
+                Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 3.dp)
-                        .clip(RoundedCornerShape(12.dp))
+                        .clip(RoundedCornerShape(18.dp))
                         .background(
                             brush = Brush.linearGradient(
-                                colors = listOf(Color(0xFF3B5BFF), Color(0xFF6B82FF))
+                                colors = listOf(Color(0xE63B5BFF), Color(0xCC7C6BFF))
                             )
                         )
                         .clickable {
@@ -349,45 +375,115 @@ fun ReceiversScreen(
                             onNavigateToPairing()
                         }
                         .padding(horizontal = 16.dp, vertical = 14.dp),
-                    contentAlignment = Alignment.Center
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(34.dp)
+                            .clip(CircleShape)
+                            .background(Color(0x24FFFFFF)),
+                        contentAlignment = Alignment.Center
+                    ) {
                         Icon(
                             imageVector = Icons.Default.Add,
                             contentDescription = "Add",
                             tint = Color.White,
                             modifier = Modifier.size(18.dp)
                         )
-                        Spacer(modifier = Modifier.width(8.dp))
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
                         Text(
                             text = "Add & Pair a New PC",
                             color = Color.White,
                             fontSize = 14.sp,
                             fontWeight = FontWeight.Bold
                         )
+                        Text(
+                            text = "Open scanner and pair another receiver",
+                            color = Color(0xCCFFFFFF),
+                            fontSize = 11.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
                     }
+                    Icon(
+                        imageVector = Icons.Default.KeyboardArrowDown,
+                        contentDescription = null,
+                        tint = Color.White.copy(alpha = 0.55f),
+                        modifier = Modifier.size(18.dp)
+                    )
                 }
 
-                // Drag handle at bottom
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Tap outside or press Back to close",
+                        color = Color(0x73FFFFFF),
+                        fontSize = 10.sp,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Box(
+                        modifier = Modifier
+                            .width(38.dp)
+                            .height(4.dp)
+                            .clip(RoundedCornerShape(2.dp))
+                            .background(Color(0x55FFFFFF))
+                    )
+                }
+            }
+        }
+
+        AnimatedVisibility(
+            visible = !showSettingsMenu,
+            modifier = Modifier.align(Alignment.TopCenter),
+            enter = fadeIn(animationSpec = tween(180)),
+            exit = fadeOut(animationSpec = tween(120))
+        ) {
+            Row(
+                modifier = Modifier
+                    .statusBarsPadding()
+                    .padding(top = 14.dp)
+                    .clip(RoundedCornerShape(999.dp))
+                    .background(Color(0x4A101114))
+                    .border(BorderStroke(1.dp, Color(0x18FFFFFF)), RoundedCornerShape(999.dp))
+                    .clickable { showSettingsMenu = true }
+                    .padding(start = 12.dp, top = 6.dp, end = 10.dp, bottom = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 Box(
                     modifier = Modifier
-                        .padding(top = 16.dp, bottom = 10.dp)
-                        .width(36.dp)
-                        .height(4.dp)
-                        .clip(RoundedCornerShape(2.dp))
-                        .background(Color(0x4DFFFFFF))
+                        .size(6.dp)
+                        .clip(CircleShape)
+                        .background(if (connectionState == "Connected") Color(0xFF4CAF50) else Color(0xFFFFC107))
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = receiverConnectionMode.label,
+                    color = Color.White.copy(alpha = 0.72f),
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1
+                )
+                Icon(
+                    imageVector = Icons.Default.KeyboardArrowDown,
+                    contentDescription = "Receiver settings",
+                    tint = Color.White.copy(alpha = 0.45f),
+                    modifier = Modifier.size(16.dp)
                 )
             }
         }
 
-        // Top HUD Area (Rendered last to sit on top of the dropdown menu)
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .statusBarsPadding()
                 .padding(horizontal = 16.dp, vertical = 12.dp)
         ) {
-            // Left side — REC timer
             if (isRecording) {
                 val infiniteTransition = rememberInfiniteTransition()
                 val dotAlpha by infiniteTransition.animateFloat(
@@ -410,23 +506,23 @@ fun ReceiversScreen(
                 }
             }
 
-            // Center — inconspicuous arrow V button
-            IconButton(
-                onClick = { showSettingsMenu = !showSettingsMenu },
-                colors = IconButtonDefaults.iconButtonColors(containerColor = Color.Transparent),
-                modifier = Modifier
-                    .align(Alignment.Center)
-                    .size(36.dp)
-            ) {
-                Icon(
-                    imageVector = if (showSettingsMenu) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
-                    contentDescription = "Receiver settings",
-                    tint = Color.White.copy(alpha = 0.4f),
-                    modifier = Modifier.size(24.dp)
-                )
+            if (showSettingsMenu) {
+                IconButton(
+                    onClick = { showSettingsMenu = false },
+                    colors = IconButtonDefaults.iconButtonColors(containerColor = Color.Transparent),
+                    modifier = Modifier
+                        .align(Alignment.Center)
+                        .size(36.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.KeyboardArrowUp,
+                        contentDescription = "Receiver settings",
+                        tint = Color.White.copy(alpha = 0.5f),
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
             }
         }
-
         // Dashboard overlay
         Column(
             modifier = Modifier
@@ -559,7 +655,7 @@ fun ReceiversScreen(
                                     val moreCount = (hosts.size - 1).coerceAtLeast(0)
                                     val hostText = if (moreCount > 0) "$firstHost +$moreCount" else firstHost
                                     Text(
-                                        text = "${device.os.uppercase()} · $hostText",
+                                        text = "${device.os.uppercase()} Â· $hostText",
                                         color = Color(0xFF8C8E96),
                                         fontSize = 11.sp,
                                         fontFamily = FontFamily.SansSerif
@@ -604,7 +700,7 @@ fun ReceiversScreen(
                         }
                     }
                 }
-                    // Right-edge "pocket" fade — suggests the row continues off-screen
+                    // Right-edge pocket marker suggests the row continues off-screen
                     if (receiverRowState.canScrollForward) {
                         Box(
                             modifier = Modifier
@@ -1022,6 +1118,165 @@ private fun copyUriToCache(context: Context, uri: Uri): File? {
         tempFile
     } catch (e: Exception) {
         null
+    }
+}
+
+@Composable
+private fun SettingsStatusPill(
+    text: String,
+    isPositive: Boolean
+) {
+    val dotColor = if (isPositive) Color(0xFF4CAF50) else Color(0xFFFFC107)
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(999.dp))
+            .background(Color(0x241F2128))
+            .border(BorderStroke(1.dp, Color(0x18FFFFFF)), RoundedCornerShape(999.dp))
+            .padding(horizontal = 10.dp, vertical = 7.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(7.dp)
+                .clip(CircleShape)
+                .background(dotColor)
+        )
+        Spacer(modifier = Modifier.width(7.dp))
+        Text(
+            text = text,
+            color = Color.White.copy(alpha = 0.82f),
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1
+        )
+    }
+}
+
+@Composable
+private fun SettingsSectionCard(
+    title: String,
+    caption: String,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(20.dp))
+            .background(Color(0x261F2128))
+            .border(BorderStroke(1.dp, Color(0x18FFFFFF)), RoundedCornerShape(20.dp))
+            .padding(14.dp)
+    ) {
+        Text(
+            text = title,
+            color = Color.White,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.ExtraBold
+        )
+        Text(
+            text = caption,
+            color = Color(0x8CFFFFFF),
+            fontSize = 11.sp,
+            lineHeight = 15.sp,
+            modifier = Modifier.padding(top = 2.dp)
+        )
+        content()
+    }
+}
+
+@Composable
+private fun SettingsChoiceTile(
+    title: String,
+    subtitle: String,
+    active: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(16.dp))
+            .background(if (active) Color(0x303B5BFF) else Color(0x18101114))
+            .border(
+                BorderStroke(1.dp, if (active) Color(0x663B5BFF) else Color(0x12FFFFFF)),
+                RoundedCornerShape(16.dp)
+            )
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 11.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier
+                    .size(8.dp)
+                    .clip(CircleShape)
+                    .background(if (active) Color(0xFFA4B4FF) else Color(0x4DFFFFFF))
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = title,
+                color = if (active) Color(0xFFDEE0FF) else Color.White.copy(alpha = 0.82f),
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        Text(
+            text = subtitle,
+            color = Color(0x80FFFFFF),
+            fontSize = 10.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(start = 16.dp, top = 3.dp)
+        )
+    }
+}
+
+@Composable
+private fun ConnectionModeRow(
+    title: String,
+    subtitle: String,
+    active: Boolean,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .background(if (active) Color(0x303B5BFF) else Color(0x12101114))
+            .border(
+                BorderStroke(1.dp, if (active) Color(0x663B5BFF) else Color(0x10FFFFFF)),
+                RoundedCornerShape(16.dp)
+            )
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 11.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                color = if (active) Color(0xFFDEE0FF) else Color.White.copy(alpha = 0.86f),
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                text = subtitle,
+                color = Color(0x78FFFFFF),
+                fontSize = 10.sp,
+                lineHeight = 13.sp,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(top = 2.dp)
+            )
+        }
+        Spacer(modifier = Modifier.width(10.dp))
+        Box(
+            modifier = Modifier
+                .size(if (active) 18.dp else 14.dp)
+                .clip(CircleShape)
+                .background(if (active) Color(0xFFA4B4FF) else Color(0x22FFFFFF))
+                .border(BorderStroke(1.dp, Color(0x24FFFFFF)), CircleShape)
+        )
     }
 }
 
