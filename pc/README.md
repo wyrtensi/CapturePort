@@ -1,4 +1,12 @@
-# CapturePort PC Receiver & MCP Server
+<p align="center">
+  <img src="src-tauri/icons/icon.png" width="128" height="128" alt="CapturePort Logo" />
+</p>
+
+<h1 align="center">CapturePort PC Receiver & MCP Server</h1>
+
+<p align="center">
+  <strong>Cross-platform desktop background service, receiver tray application, and Model Context Protocol (MCP) server.</strong>
+</p>
 
 CapturePort's PC Receiver is a cross-platform desktop application designed to receive media (photos and videos) captured by the paired CapturePort Android application over a local network. It acts as both a system tray background service and a Model Context Protocol (MCP) server for local AI agents.
 

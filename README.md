@@ -1,8 +1,18 @@
-# CapturePort
+<h1 align="center">CapturePort</h1>
 
-[![Android Build](https://github.com/wyrtensi/CapturePort/actions/workflows/android-build.yml/badge.svg)](https://github.com/wyrtensi/CapturePort/actions/workflows/android-build.yml)
-[![PC Build](https://github.com/wyrtensi/CapturePort/actions/workflows/pc-build.yml/badge.svg)](https://github.com/wyrtensi/CapturePort/actions/workflows/pc-build.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+<p align="center">
+  <img src="pc/src-tauri/icons/icon.png" width="128" height="128" alt="CapturePort Logo" />
+</p>
+
+<p align="center">
+  <strong>Secure, cross-platform media and capture bridge linking Android devices to your desktop environment.</strong>
+</p>
+
+<p align="center">
+  <a href="https://github.com/wyrtensi/CapturePort/actions/workflows/android-build.yml"><img src="https://github.com/wyrtensi/CapturePort/actions/workflows/android-build.yml/badge.svg" alt="Android Build" /></a>
+  <a href="https://github.com/wyrtensi/CapturePort/actions/workflows/pc-build.yml"><img src="https://github.com/wyrtensi/CapturePort/actions/workflows/pc-build.yml/badge.svg" alt="PC Build" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT" /></a>
+</p>
 
 CapturePort is a secure, cross-platform media and capture bridge linking Android devices to your desktop environment (Windows, macOS, Linux). It includes a built-in **Model Context Protocol (MCP)** server, enabling real-time visual streams and clipboard synchronization directly inside agent-driven local IDEs like **Cursor** and assistants like **Claude Desktop**.
 
@@ -18,28 +28,52 @@ The following diagram outlines the relationship between the Compose-based Androi
 
 ```mermaid
 graph TD
-    subgraph Android["Android Client (Kotlin + Compose)"]
-        UI[Jetpack Compose UI] --> CamX[CameraX Controller]
-        UI --> NSD[mDNS Service Discovery]
-        UI --> UDP[UDP Discovery Listener]
-        CamX --> WSClient[OkHttp WS Client]
-        KM[Android Keystore KeyManager] --> WSClient
+    %% Custom Sleek Styling
+    classDef android fill:#0E2A1B,stroke:#3DDC84,stroke-width:2px,color:#FFFFFF;
+    classDef pc fill:#0F172A,stroke:#38BDF8,stroke-width:2px,color:#FFFFFF;
+    classDef agent fill:#1E1B4B,stroke:#818CF8,stroke-width:2px,color:#FFFFFF;
+
+    subgraph Android["📱 Android Client (Kotlin + Compose)"]
+        UI(["🎨 Jetpack Compose UI"]):::android
+        CamX[["📷 CameraX Controller"]]:::android
+        NSD["🔍 mDNS Service Discovery"]:::android
+        UDP[("📡 UDP Discovery Listener")]:::android
+        WSClient(["🔌 OkHttp WS Client"]):::android
+        KM[["🔑 Android Keystore KeyManager"]]:::android
     end
 
-    subgraph PC["PC Tauri Environment (Rust + Svelte)"]
-        Tray[System Tray / Svelte UI] --> App[Tauri 2 Core]
-        App --> Axum[Axum HTTP & WS Server]
-        Axum --> WSHandler[WebSocket Handler]
-        App --> UDPBeacon[UDP Broadcast Emitter]
+    subgraph PC["💻 PC Tauri Environment (Rust + Svelte)"]
+        Tray(["📥 System Tray / Svelte UI"]):::pc
+        App[["⚙️ Tauri 2 Core"]]:::pc
+        Axum[["🌐 Axum HTTP & WS Server"]]:::pc
+        WSHandler(["⚡ WebSocket Handler"]):::pc
+        UDPBeacon[("📡 UDP Broadcast Emitter")]:::pc
     end
 
-    subgraph Agent["Host AI Environment (MCP stdio mode)"]
-        Claude[Claude Desktop / Cursor] -->|Stdio JSON-RPC| App
+    subgraph Agent["🤖 Host AI Environment (MCP)"]
+        Claude(["🧠 Claude Desktop / Cursor"]):::agent
     end
 
-    WSClient <==>|Local WebSocket (ws://)| WSHandler
-    NSD -.->|mDNS Discovery| Axum
-    UDPBeacon -.->|UDP Broadcasts (Port 5354)| UDP
+    %% Internal Android Relationships
+    UI --> CamX
+    UI --> NSD
+    UI --> UDP
+    CamX --> WSClient
+    KM --> WSClient
+
+    %% Internal PC Relationships
+    Tray --> App
+    App --> Axum
+    Axum --> WSHandler
+    App --> UDPBeacon
+
+    %% Stdio MCP IPC
+    Claude -->|"Stdio JSON-RPC"| App
+
+    %% Cross-Platform Local Network Connections
+    WSClient <-->|"WebSocket (ws://)"| WSHandler
+    NSD -.->|"mDNS Discovery"| Axum
+    UDPBeacon -.->|"UDP Broadcasts (Port 5354)"| UDP
 ```
 
 ### Cryptographic Mutual Pairing Flow
@@ -49,26 +83,36 @@ To ensure complete out-of-band trust validation, CapturePort relies on a **two-w
 ```mermaid
 sequenceDiagram
     autonumber
-    participant PC as PC Receiver (Tauri / Axum)
-    participant And as Android Client (Compose)
+    actor User as 👤 User
+    participant PC as 💻 PC Receiver (Tauri / Axum)
+    participant Android as 📱 Android Client (Compose)
 
+    Note over PC: 1. Setup & QR Generation
     PC->>PC: Generate Ed25519 Keypair & Active Nonce
     PC->>PC: Render QR Code (PC PublicKey, Nonce, Hosts, Port)
-    And->>And: Scan QR Code & Retrieve PC details
-    And->>And: Retrieve Android Ed25519 Keypair
-    And->>PC: WebSocket Connect & Send "hello" (PC Nonce signed by PC Key)
+    
+    Note over User, Android: 2. Scanning & Discovery
+    User->>Android: Scan QR Code via ML-Kit Scanner
+    Android->>Android: Retrieve Android Ed25519 Keypair
+    
+    Note over Android, PC: 3. Mutual Cryptographic Authentication
+    Android->>PC: WebSocket Connect & Send "hello" (PC Nonce signed by PC Key)
     PC->>PC: Verify Nonce and Signature
-    PC->>And: Send "challenge" (Random Nonce PC)
-    And->>And: Sign Nonce PC with Android Private Key
-    And->>PC: Send Challenge Response (Signature)
+    PC->>Android: Send "challenge" (Random Nonce PC)
+    Android->>Android: Sign Nonce PC with Android Private Key
+    Android->>PC: Send Challenge Response (Signature)
     PC->>PC: Verify Android Signature with Android PublicKey & Calculate Fingerprint
-    PC->>And: Send "verified" status with fingerprint & Device ID
-    And->>And: Display Fingerprint verification dialog to User
-    Note over And: User clicks "Confirm" in Android App
-    And->>PC: Send "pair_confirm" Request
+    PC->>Android: Send "verified" status with fingerprint & Device ID
+    
+    Note over User, Android: 4. Out-of-band Confirmation
+    Android->>Android: Display Fingerprint verification dialog to User
+    User->>Android: Click "Confirm" in Android App
+    Android->>PC: Send "pair_confirm" Request
+    
+    Note over PC, Android: 5. Pairing Completed
     PC->>PC: Save Android credentials to disk
-    PC->>And: Send "paired" response with access Token
-    And->>And: Save PC credentials to DataStore
+    PC->>Android: Send "paired" response with access Token
+    Android->>Android: Save PC credentials to DataStore
 ```
 
 ---
@@ -93,7 +137,7 @@ CapturePort is engineered from the ground up for strict local privacy:
 
 ### Connection Route Modes
 - **Local** ("Local only"): Forces the socket to only try LAN IP addresses.
-- **Mixed** ("Through internet"): Sequentially tries all discovered local LAN IPs first, then falls back to the external hostname.
+- **Mixed** ("Mixed"): Sequentially tries all discovered local LAN IPs first, then falls back to the external hostname.
 - **Internet** ("Internet only"): Bypasses LAN hosts entirely and directly connects to the configured external host and port.
 
 ### Receiver Controls
