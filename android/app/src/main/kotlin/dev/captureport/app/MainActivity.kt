@@ -25,6 +25,8 @@ import dev.captureport.app.pairing.PairingViewModel
 import dev.captureport.app.receivers.ReceiversScreen
 import dev.captureport.app.receivers.ReceiversViewModel
 import java.io.File
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
 
 class MainActivity : ComponentActivity() {
 
@@ -75,18 +77,20 @@ class MainActivity : ComponentActivity() {
                 context = applicationContext,
                 scope = app.applicationScope,
                 onCaptureRequest = { onPhotoSnapped, onCaptureRejected ->
-                    val activeCam = app.activeCameraController
-                    if (app.canServeRemoteCameraCapture() && activeCam != null) {
-                        activeCam.takePhoto(
-                            onSuccess = { file -> onPhotoSnapped(file) },
-                            onError = { err ->
-                                Log.e("MainActivity", "MCP photo snap failed: ${err.message}")
-                                onCaptureRejected("camera capture failed")
-                            }
-                        )
-                    } else {
-                        Log.w("MainActivity", "Remote camera capture rejected: camera unavailable in ScreenOnly mode")
-                        onCaptureRejected("camera unavailable while app screen is not open")
+                    app.applicationScope.launch(Dispatchers.Main) {
+                        val activeCam = app.cameraController
+                        if (app.canServeRemoteCameraCapture()) {
+                            activeCam.takePhoto(
+                                onSuccess = { file -> onPhotoSnapped(file) },
+                                onError = { err ->
+                                    Log.e("MainActivity", "MCP photo snap failed: ${err.message}")
+                                    onCaptureRejected("camera capture failed")
+                                }
+                            )
+                        } else {
+                            Log.w("MainActivity", "Remote camera capture rejected: camera unavailable in ScreenOnly mode")
+                            onCaptureRejected("camera unavailable while app screen is not open")
+                        }
                     }
                 }
             )
@@ -142,6 +146,20 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        val app = application as CapturePortApp
+        app.isActivityVisible = true
+        app.updateBackgroundService()
+    }
+
+    override fun onStop() {
+        super.onStop()
+        val app = application as CapturePortApp
+        app.isActivityVisible = false
+        app.updateBackgroundService()
     }
 
     override fun onDestroy() {

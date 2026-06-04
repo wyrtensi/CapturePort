@@ -66,8 +66,8 @@ class CameraController(
         boundLifecycleOwner = lifecycleOwner
     }
 
-    fun unbind() {
-        if (boundLifecycleOwner == null) {
+    fun unbind(lifecycleOwner: LifecycleOwner? = null) {
+        if (boundLifecycleOwner == null || (lifecycleOwner != null && boundLifecycleOwner !== lifecycleOwner)) {
             return
         }
 

@@ -13,8 +13,8 @@ android {
         applicationId = "dev.captureport.app"
         minSdk = 33 // Target Android 13+ as approved, natively supporting Ed25519 Keystore
         targetSdk = 34
-        versionCode = 23
-        versionName = "0.3.2"
+        versionCode = 24
+        versionName = "0.3.3"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -75,6 +75,7 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
+    implementation(libs.androidx.lifecycle.service)
     implementation(libs.androidx.activity.compose)
     
     // Jetpack Compose

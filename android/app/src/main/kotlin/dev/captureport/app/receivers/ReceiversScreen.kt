@@ -61,6 +61,7 @@ import dev.captureport.app.ReceiverConnectionMode
 import dev.captureport.app.camera.CameraController
 import dev.captureport.app.data.PairedDevice
 import dev.captureport.app.transfer.TransferService
+import dev.captureport.app.service.CapturePortService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -69,6 +70,10 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+
+enum class RotationLockMode {
+    AUTO, PORTRAIT, LANDSCAPE
+}
 
 @OptIn(ExperimentalAnimationApi::class)
 @Composable
@@ -86,7 +91,7 @@ fun ReceiversScreen(
 
     val connectionState by (app.wsClient?.connectionState?.collectAsState() ?: remember { mutableStateOf("Disconnected") })
 
-    val cameraController = remember { CameraController(context) }
+    val cameraController = remember { app.cameraController }
     
     var isRecording by remember { mutableStateOf(false) }
     var recordingDuration by rememberSaveable { mutableStateOf(0) }
@@ -94,9 +99,13 @@ fun ReceiversScreen(
     var currentPolicy by remember { mutableStateOf(app.cameraCapturePolicy) }
     var receiverConnectionMode by remember { mutableStateOf(app.receiverConnectionMode) }
 
-    var isRotationLocked by rememberSaveable { mutableStateOf(false) }
+    var rotationLockMode by rememberSaveable { mutableStateOf(RotationLockMode.AUTO) }
     var physicalRotation by remember { mutableStateOf(0) }
-    val currentRotation = if (isRotationLocked) 0 else physicalRotation
+    val currentRotation = when (rotationLockMode) {
+        RotationLockMode.AUTO -> physicalRotation
+        RotationLockMode.PORTRAIT -> 0
+        RotationLockMode.LANDSCAPE -> if (physicalRotation == 270) 270 else 90
+    }
 
     val iconRotation by animateFloatAsState(
         targetValue = currentRotation.toFloat(),
@@ -128,9 +137,9 @@ fun ReceiversScreen(
 
     LaunchedEffect(currentRotation) {
         val targetRotationValue = when (currentRotation) {
-            90 -> Surface.ROTATION_270
+            90 -> Surface.ROTATION_90
             180 -> Surface.ROTATION_180
-            270 -> Surface.ROTATION_90
+            270 -> Surface.ROTATION_270
             else -> Surface.ROTATION_0
         }
         try {
@@ -262,16 +271,14 @@ fun ReceiversScreen(
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
                 Lifecycle.Event.ON_START, Lifecycle.Event.ON_RESUME -> {
-                    app.activeCameraController = cameraController
                     app.isCameraScreenVisible = true
                     cameraController.bindToLifecycle(lifecycleOwner)
+                    app.updateBackgroundService()
                 }
                 Lifecycle.Event.ON_PAUSE, Lifecycle.Event.ON_STOP, Lifecycle.Event.ON_DESTROY -> {
-                    if (app.activeCameraController === cameraController) {
-                        app.activeCameraController = null
-                    }
                     app.isCameraScreenVisible = false
                     cameraController.unbind()
+                    app.updateBackgroundService()
                 }
                 else -> Unit
             }
@@ -280,18 +287,23 @@ fun ReceiversScreen(
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(observer)
             app.isCameraScreenVisible = false
-            if (app.activeCameraController === cameraController) {
-                app.activeCameraController = null
-            }
-            cameraController.release()
+            app.updateBackgroundService()
         }
     }
 
     LaunchedEffect(selectedDevice) {
         val dev = selectedDevice
         if (dev != null) {
+            val intent = Intent(context, CapturePortService::class.java).apply {
+                action = CapturePortService.ACTION_START
+            }
+            ContextCompat.startForegroundService(context, intent)
             app.wsClient?.connect(dev)
         } else {
+            val intent = Intent(context, CapturePortService::class.java).apply {
+                action = CapturePortService.ACTION_STOP
+            }
+            context.stopService(intent)
             app.wsClient?.disconnect()
         }
     }
@@ -399,10 +411,11 @@ fun ReceiversScreen(
                     .padding(horizontal = 14.dp, vertical = 14.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
+                val isLandscape = currentRotation == 90 || currentRotation == 270
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(top = 48.dp, bottom = 14.dp),
+                        .padding(top = if (isLandscape) 32.dp else 48.dp, bottom = if (isLandscape) 8.dp else 14.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(
@@ -432,58 +445,180 @@ fun ReceiversScreen(
                     )
                 }
 
-                SettingsSectionCard(
-                    title = "Camera capture",
-                    iconRotation = iconRotation
-                ) {
+                if (isLandscape) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(top = 10.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            .padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        CameraCapturePolicy.values().forEach { policy ->
-                            CompactSettingsChoiceTile(
-                                title = policy.label.removePrefix("Camera: ").replaceFirstChar { it.uppercase() },
-                                active = currentPolicy == policy,
-                                modifier = Modifier.weight(1f),
+                        Box(modifier = Modifier.weight(1f)) {
+                            SettingsSectionCard(
+                                title = "Camera capture",
                                 iconRotation = iconRotation,
-                                onClick = { applyCameraMode(policy) }
-                            )
+                                isLandscape = true
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(top = 8.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    CameraCapturePolicy.values().forEach { policy ->
+                                        CompactSettingsChoiceTile(
+                                            title = policy.label.removePrefix("Camera: ").replaceFirstChar { it.uppercase() },
+                                            active = currentPolicy == policy,
+                                            modifier = Modifier.weight(1f),
+                                            iconRotation = iconRotation,
+                                            isLandscape = true,
+                                            onClick = { applyCameraMode(policy) }
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        Box(modifier = Modifier.weight(1f)) {
+                            SettingsSectionCard(
+                                title = "Connection route",
+                                iconRotation = iconRotation,
+                                isLandscape = true
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(top = 8.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    ReceiverConnectionMode.values().forEach { mode ->
+                                        CompactSettingsChoiceTile(
+                                            title = when (mode) {
+                                                ReceiverConnectionMode.LocalOnly -> "Local"
+                                                ReceiverConnectionMode.LocalThenInternet -> "Mixed"
+                                                ReceiverConnectionMode.InternetOnly -> "Internet"
+                                            },
+                                            active = receiverConnectionMode == mode,
+                                            modifier = Modifier.weight(1f),
+                                            iconRotation = iconRotation,
+                                            isLandscape = true,
+                                            onClick = { applyConnectionMode(mode) }
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        Box(modifier = Modifier.weight(1f)) {
+                            SettingsSectionCard(
+                                title = "Screen rotation",
+                                iconRotation = iconRotation,
+                                isLandscape = true
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(top = 8.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    RotationLockMode.values().forEach { mode ->
+                                        CompactSettingsChoiceTile(
+                                            title = when (mode) {
+                                                RotationLockMode.AUTO -> "Auto-Rotate"
+                                                RotationLockMode.PORTRAIT -> "Lock Portrait"
+                                                RotationLockMode.LANDSCAPE -> "Lock Landscape"
+                                            },
+                                            active = rotationLockMode == mode,
+                                            modifier = Modifier.weight(1f),
+                                            iconRotation = iconRotation,
+                                            isLandscape = true,
+                                            onClick = { rotationLockMode = mode }
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    SettingsSectionCard(
+                        title = "Camera capture",
+                        iconRotation = iconRotation
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 10.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            CameraCapturePolicy.values().forEach { policy ->
+                                CompactSettingsChoiceTile(
+                                    title = policy.label.removePrefix("Camera: ").replaceFirstChar { it.uppercase() },
+                                    active = currentPolicy == policy,
+                                    modifier = Modifier.weight(1f),
+                                    iconRotation = iconRotation,
+                                    onClick = { applyCameraMode(policy) }
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    SettingsSectionCard(
+                        title = "Connection route",
+                        iconRotation = iconRotation
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 10.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            ReceiverConnectionMode.values().forEach { mode ->
+                                CompactSettingsChoiceTile(
+                                    title = when (mode) {
+                                        ReceiverConnectionMode.LocalOnly -> "Local"
+                                        ReceiverConnectionMode.LocalThenInternet -> "Mixed"
+                                        ReceiverConnectionMode.InternetOnly -> "Internet"
+                                    },
+                                    active = receiverConnectionMode == mode,
+                                    modifier = Modifier.weight(1f),
+                                    iconRotation = iconRotation,
+                                    onClick = { applyConnectionMode(mode) }
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    SettingsSectionCard(
+                        title = "Screen rotation",
+                        iconRotation = iconRotation
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 10.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            RotationLockMode.values().forEach { mode ->
+                                CompactSettingsChoiceTile(
+                                    title = when (mode) {
+                                        RotationLockMode.AUTO -> "Auto-Rotate"
+                                        RotationLockMode.PORTRAIT -> "Lock Portrait"
+                                        RotationLockMode.LANDSCAPE -> "Lock Landscape"
+                                    },
+                                    active = rotationLockMode == mode,
+                                    modifier = Modifier.weight(1f),
+                                    iconRotation = iconRotation,
+                                    onClick = { rotationLockMode = mode }
+                                )
+                            }
                         }
                     }
                 }
 
-                Spacer(modifier = Modifier.height(10.dp))
-
-                // Keep for test compatibility: "Local only", "Through internet"
-                SettingsSectionCard(
-                    title = "Connection route",
-                    iconRotation = iconRotation
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 10.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        ReceiverConnectionMode.values().forEach { mode ->
-                            CompactSettingsChoiceTile(
-                                title = when (mode) {
-                                    ReceiverConnectionMode.LocalOnly -> "Local"
-                                    ReceiverConnectionMode.LocalThenInternet -> "Mixed"
-                                    ReceiverConnectionMode.InternetOnly -> "Internet"
-                                },
-                                active = receiverConnectionMode == mode,
-                                modifier = Modifier.weight(1f),
-                                iconRotation = iconRotation,
-                                onClick = { applyConnectionMode(mode) }
-                            )
-                        }
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(10.dp))
+                Spacer(modifier = Modifier.height(if (isLandscape) 6.dp else 10.dp))
 
                 Row(
                     modifier = Modifier
@@ -495,12 +630,15 @@ fun ReceiversScreen(
                             showSettingsMenu = false
                             onNavigateToPairing()
                         }
-                        .padding(horizontal = 16.dp, vertical = 11.dp),
+                        .padding(
+                            horizontal = 16.dp,
+                            vertical = if (isLandscape) 8.dp else 11.dp
+                        ),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(34.dp)
+                            .size(if (isLandscape) 30.dp else 34.dp)
                             .clip(CircleShape)
                             .background(Color(0x12FFFFFF))
                             .rotate(iconRotation),
@@ -510,7 +648,7 @@ fun ReceiversScreen(
                             imageVector = Icons.Default.Add,
                             contentDescription = "Add",
                             tint = Color.White,
-                            modifier = Modifier.size(18.dp)
+                            modifier = Modifier.size(if (isLandscape) 16.dp else 18.dp)
                         )
                     }
                     Spacer(modifier = Modifier.width(12.dp))
@@ -522,13 +660,13 @@ fun ReceiversScreen(
                         Text(
                             text = "Add & Pair a New PC",
                             color = Color.White,
-                            fontSize = 14.sp,
+                            fontSize = if (isLandscape) 13.sp else 14.sp,
                             fontWeight = FontWeight.Bold
                         )
                         Text(
                             text = "Open scanner and pair another receiver",
                             color = Color(0x8CFFFFFF),
-                            fontSize = 11.sp,
+                            fontSize = if (isLandscape) 10.sp else 11.sp,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
@@ -541,67 +679,10 @@ fun ReceiversScreen(
                     )
                 }
 
-                Spacer(modifier = Modifier.height(10.dp))
-
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(18.dp))
-                        .background(Color(0x991F2128))
-                        .border(BorderStroke(1.dp, Color(0xFF2C2E35)), RoundedCornerShape(18.dp))
-                        .clickable {
-                            isRotationLocked = !isRotationLocked
-                        }
-                        .padding(horizontal = 16.dp, vertical = 11.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(34.dp)
-                            .clip(CircleShape)
-                            .background(Color(0x12FFFFFF))
-                            .rotate(iconRotation),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = if (isRotationLocked) Icons.Default.Lock else LockOpenIcon,
-                            contentDescription = "Rotation Lock",
-                            tint = Color.White,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column(
-                        modifier = Modifier
-                            .weight(1f)
-                            .rotate(iconRotation)
-                    ) {
-                        Text(
-                            text = "Rotation Lock",
-                            color = Color.White,
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            text = if (isRotationLocked) "Locked to portrait" else "Auto-rotate with device",
-                            color = Color(0x8CFFFFFF),
-                            fontSize = 11.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                    Icon(
-                        imageVector = if (isRotationLocked) Icons.Default.Lock else LockOpenIcon,
-                        contentDescription = null,
-                        tint = Color.White.copy(alpha = 0.55f),
-                        modifier = Modifier.size(18.dp).rotate(iconRotation)
-                    )
-                }
-
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 12.dp),
+                        .padding(top = if (isLandscape) 8.dp else 12.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
@@ -635,10 +716,7 @@ fun ReceiversScreen(
             ) {
                 IconButton(
                     onClick = { cameraController.toggleCamera() },
-                    modifier = Modifier
-                        .size(40.dp)
-                        .background(Color(0x80101114), CircleShape)
-                        .border(1.dp, Color(0x1AFFFFFF), CircleShape)
+                    modifier = Modifier.size(40.dp)
                 ) {
                     Icon(
                         imageVector = CameraswitchIcon,
@@ -661,6 +739,7 @@ fun ReceiversScreen(
                     modifier = Modifier
                         .align(Alignment.CenterEnd)
                         .height(30.dp)
+                        .offset(y = if (currentRotation == 90 || currentRotation == 270) 80.dp else 0.dp)
                         .rotate(iconRotation)
                         .background(Color(0x99FF3B30), RoundedCornerShape(999.dp))
                         .padding(horizontal = 10.dp),
@@ -786,7 +865,7 @@ fun ReceiversScreen(
                     items(pairedDevices, key = { it.id }) { device ->
                         val isSelected = selectedDevice?.id == device.id
                         val borderCol = if (isSelected) Color(0xFF3B5BFF) else Color(0xFF2C2E35)
-                        val bgCol = if (isSelected) Color(0xE61F2128) else Color(0x991F2128)
+                        val bgCol = if (isSelected) Color(0x661F2128) else Color(0x331F2128)
                         val isCollapsed = collapsedDevices[device.id] ?: true
                         val displayName = device.alias.ifBlank { device.name }
 
@@ -985,11 +1064,15 @@ fun ReceiversScreen(
                         cameraController.takePhoto(
                             onSuccess = { file ->
                                 val ws = app.wsClient
-                                if (ws != null && connectionState == "Connected") {
+                                if (ws != null) {
                                     ws.pushPhoto(file)
-                                    Toast.makeText(context, "Photo copied to PC clipboard!", Toast.LENGTH_SHORT).show()
+                                    if (connectionState == "Connected") {
+                                        Toast.makeText(context, "Photo copied to PC clipboard!", Toast.LENGTH_SHORT).show()
+                                    } else {
+                                        Toast.makeText(context, "Saved locally. Will upload once connected.", Toast.LENGTH_LONG).show()
+                                    }
                                 } else {
-                                    Toast.makeText(context, "Saved locally. Receiver not connected.", Toast.LENGTH_LONG).show()
+                                    Toast.makeText(context, "Saved locally. Receiver not set up.", Toast.LENGTH_LONG).show()
                                 }
                             },
                             onError = { err ->
@@ -1316,6 +1399,7 @@ private fun SettingsSectionCard(
     title: String,
     caption: String = "",
     iconRotation: Float = 0f,
+    isLandscape: Boolean = false,
     content: @Composable ColumnScope.() -> Unit
 ) {
     Column(
@@ -1324,12 +1408,12 @@ private fun SettingsSectionCard(
             .clip(RoundedCornerShape(20.dp))
             .background(Color(0x261F2128))
             .border(BorderStroke(1.dp, Color(0x18FFFFFF)), RoundedCornerShape(20.dp))
-            .padding(12.dp)
+            .padding(if (isLandscape) 8.dp else 12.dp)
     ) {
         Text(
             text = title,
             color = Color.White,
-            fontSize = 13.sp,
+            fontSize = if (isLandscape) 12.sp else 13.sp,
             fontWeight = FontWeight.ExtraBold,
             modifier = Modifier.rotate(iconRotation)
         )
@@ -1337,8 +1421,8 @@ private fun SettingsSectionCard(
             Text(
                 text = caption,
                 color = Color(0x8CFFFFFF),
-                fontSize = 11.sp,
-                lineHeight = 15.sp,
+                fontSize = if (isLandscape) 10.sp else 11.sp,
+                lineHeight = if (isLandscape) 13.sp else 15.sp,
                 modifier = Modifier.padding(top = 2.dp).rotate(iconRotation)
             )
         }
@@ -1352,6 +1436,7 @@ private fun CompactSettingsChoiceTile(
     active: Boolean,
     modifier: Modifier = Modifier,
     iconRotation: Float = 0f,
+    isLandscape: Boolean = false,
     onClick: () -> Unit
 ) {
     Row(
@@ -1363,7 +1448,10 @@ private fun CompactSettingsChoiceTile(
                 RoundedCornerShape(12.dp)
             )
             .clickable(onClick = onClick)
-            .padding(horizontal = 8.dp, vertical = 10.dp),
+            .padding(
+                horizontal = if (isLandscape) 4.dp else 8.dp,
+                vertical = if (isLandscape) 8.dp else 10.dp
+            ),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Center
     ) {
@@ -1374,15 +1462,15 @@ private fun CompactSettingsChoiceTile(
         ) {
             Box(
                 modifier = Modifier
-                    .size(6.dp)
+                    .size(if (isLandscape) 4.dp else 6.dp)
                     .clip(CircleShape)
                     .background(if (active) Color(0xFFA4B4FF) else Color(0x4DFFFFFF))
             )
-            Spacer(modifier = Modifier.width(6.dp))
+            Spacer(modifier = Modifier.width(if (isLandscape) 4.dp else 6.dp))
             Text(
                 text = title,
                 color = if (active) Color(0xFFDEE0FF) else Color.White.copy(alpha = 0.82f),
-                fontSize = 12.sp,
+                fontSize = if (isLandscape) 10.sp else 12.sp,
                 fontWeight = FontWeight.Bold,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
@@ -1606,33 +1694,30 @@ val CameraswitchIcon: ImageVector
         viewportHeight = 24f
     ).apply {
         path(fill = SolidColor(Color.White)) {
-            moveTo(16f, 7f)
-            horizontalLineTo(8f)
-            verticalLineTo(14f)
-            horizontalLineTo(6f)
-            verticalLineTo(7f)
-            curveTo(6f, 5.9f, 6.9f, 5f, 8f, 5f)
-            horizontalLineTo(16f)
-            lineTo(13.5f, 2.5f)
-            lineTo(14.92f, 1.08f)
-            lineTo(19.84f, 6f)
-            lineTo(14.92f, 10.92f)
-            lineTo(13.5f, 9.5f)
-            lineTo(16f, 7f)
+            // First arrow/curve
+            moveTo(12f, 6f)
+            verticalLineTo(9f)
+            lineTo(16f, 5f)
+            lineTo(12f, 1f)
+            verticalLineTo(4f)
+            curveTo(7.58f, 4f, 4f, 7.58f, 4f, 12f)
+            curveTo(4f, 13.57f, 4.46f, 15.03f, 5.24f, 16.26f)
+            lineTo(6.7f, 14.8f)
+            curveTo(6.25f, 14.1f, 6f, 13.08f, 6f, 12f)
+            curveTo(6f, 8.69f, 8.69f, 6f, 12f, 6f)
             close()
-            moveTo(8f, 17f)
-            horizontalLineTo(16f)
-            verticalLineTo(10f)
-            horizontalLineTo(18f)
-            verticalLineTo(17f)
-            curveTo(18f, 18.1f, 17.1f, 19f, 16f, 19f)
-            horizontalLineTo(8f)
-            lineTo(10.5f, 21.5f)
-            lineTo(9.08f, 22.92f)
-            lineTo(4.16f, 18f)
-            lineTo(9.08f, 13.08f)
-            lineTo(10.5f, 14.5f)
-            lineTo(8f, 17f)
+
+            // Second arrow/curve
+            moveTo(18.76f, 7.74f)
+            lineTo(17.3f, 9.2f)
+            curveTo(17.74f, 9.91f, 18f, 10.75f, 18f, 11.64f)
+            curveTo(18f, 14.95f, 15.31f, 17.64f, 12f, 17.64f)
+            verticalLineTo(14.64f)
+            lineTo(8f, 18.64f)
+            lineTo(12f, 22.64f)
+            verticalLineTo(19.64f)
+            curveTo(16.42f, 19.64f, 20f, 16.06f, 20f, 11.64f)
+            curveTo(20f, 10.07f, 19.54f, 8.61f, 18.76f, 7.74f)
             close()
         }
     }.build()

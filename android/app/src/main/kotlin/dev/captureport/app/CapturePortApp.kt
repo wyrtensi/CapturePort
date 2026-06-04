@@ -7,6 +7,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 
 import dev.captureport.app.network.UdpDiscoveryListener
+import kotlinx.coroutines.flow.asStateFlow
 
 enum class CameraCapturePolicy(val label: String) {
     ScreenOnly("Camera: screen only"),
@@ -29,18 +30,47 @@ class CapturePortApp : Application() {
     var wsClient: WsClient? = null
     private var udpDiscoveryListener: UdpDiscoveryListener? = null
 
-    @Volatile
-    var cameraCapturePolicy: CameraCapturePolicy = CameraCapturePolicy.ScreenOnly
+    private val _cameraCapturePolicy = kotlinx.coroutines.flow.MutableStateFlow(CameraCapturePolicy.ScreenOnly)
+    var cameraCapturePolicy: CameraCapturePolicy
+        get() = _cameraCapturePolicy.value
+        set(value) { _cameraCapturePolicy.value = value }
+    val cameraCapturePolicyFlow = _cameraCapturePolicy.asStateFlow()
+
     @Volatile
     var receiverConnectionMode: ReceiverConnectionMode = ReceiverConnectionMode.LocalThenInternet
-    @Volatile
-    var isCameraScreenVisible: Boolean = false
-    var activeCameraController: dev.captureport.app.camera.CameraController? = null
+
+    private val _isCameraScreenVisible = kotlinx.coroutines.flow.MutableStateFlow(false)
+    var isCameraScreenVisible: Boolean
+        get() = _isCameraScreenVisible.value
+        set(value) { _isCameraScreenVisible.value = value }
+    val isCameraScreenVisibleFlow = _isCameraScreenVisible.asStateFlow()
+
+    private val _isActivityVisible = kotlinx.coroutines.flow.MutableStateFlow(false)
+    var isActivityVisible: Boolean
+        get() = _isActivityVisible.value
+        set(value) { _isActivityVisible.value = value }
+    val isActivityVisibleFlow = _isActivityVisible.asStateFlow()
+    
+    lateinit var cameraController: dev.captureport.app.camera.CameraController
+        private set
 
     fun canServeRemoteCameraCapture(): Boolean {
-        return cameraCapturePolicy == CameraCapturePolicy.ScreenOnly &&
-            isCameraScreenVisible &&
-            activeCameraController != null
+        return (cameraCapturePolicy == CameraCapturePolicy.Background) ||
+               (cameraCapturePolicy == CameraCapturePolicy.ScreenOnly && isCameraScreenVisible)
+    }
+
+    fun updateBackgroundService() {
+        val intent = android.content.Intent(this, dev.captureport.app.service.CapturePortService::class.java).apply {
+            action = dev.captureport.app.service.CapturePortService.ACTION_UPDATE_STATE
+        }
+        try {
+            // Only start/update service if there's a running connection attempt or active device selected
+            // We'll let ReceiversScreen manage service start/stop cleanly based on device selection,
+            // but we can safely call startService to update state if the service is already running.
+            startService(intent)
+        } catch (e: Exception) {
+            android.util.Log.w("CapturePortApp", "Could not update service state: ${e.message}")
+        }
     }
 
     fun applyCameraCapturePolicy(policy: CameraCapturePolicy) {
@@ -49,6 +79,7 @@ class CapturePortApp : Application() {
             .edit()
             .putString(KEY_CAMERA_POLICY, policy.name)
             .apply()
+        updateBackgroundService()
     }
 
     fun applyReceiverConnectionMode(mode: ReceiverConnectionMode) {
@@ -70,6 +101,7 @@ class CapturePortApp : Application() {
             ?.let { runCatching { ReceiverConnectionMode.valueOf(it) }.getOrNull() }
             ?: ReceiverConnectionMode.LocalThenInternet
         pairedDevicesRepository = PairedDevicesRepository(this)
+        cameraController = dev.captureport.app.camera.CameraController(this)
 
         udpDiscoveryListener = UdpDiscoveryListener(this, pairedDevicesRepository, applicationScope).apply {
             start()

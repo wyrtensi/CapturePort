@@ -49,6 +49,7 @@ class WsClient(
     val connectionState: StateFlow<String> = _connectionState
 
     private var activeDevice: PairedDevice? = null
+    private val pendingPhotoUploads = java.util.concurrent.ConcurrentLinkedQueue<File>()
 
     companion object {
         fun endpointTargets(
@@ -136,6 +137,7 @@ class WsClient(
                                                     if (status == "authorized") {
                                                         _connectionState.value = "Connected"
                                                         hostSuccess.complete(true)
+                                                        flushPendingUploads(webSocket)
                                                     }
                                                 } else if (envelope.error != null) {
                                                     Log.e("WsClient", "Auth rejected: ${envelope.error.optString("message")}")
@@ -257,8 +259,8 @@ class WsClient(
                     "record_video" -> {
                         val duration = envelope.params?.optLong("duration_seconds") ?: 10L
                         val app = CapturePortApp.instance
-                        val activeCam = app.activeCameraController
-                        if (app.isCameraScreenVisible && activeCam != null) {
+                        val activeCam = app.cameraController
+                        if (app.canServeRemoteCameraCapture()) {
                             if (isRecordingVideo || activeCam.isRecording) {
                                 scope.launch(Dispatchers.IO) {
                                     sendCaptureRejected(ws, envelope.id, "Camera is already recording video")
@@ -408,33 +410,63 @@ class WsClient(
 
     // Push standard user photo captures to current PC clipboard
     fun pushPhoto(file: File) {
-        val ws = webSocket ?: run { if (file.exists()) file.delete(); return }
-        if (_connectionState.value != "Connected") { if (file.exists()) file.delete(); return }
+        val ws = webSocket
+        val isConnected = _connectionState.value == "Connected"
+        if (ws == null || !isConnected) {
+            Log.i("WsClient", "Socket offline, queueing photo for upload on reconnection: ${file.name}")
+            pendingPhotoUploads.add(file)
+            return
+        }
 
         scope.launch(Dispatchers.IO) {
-            try {
-                val compressedBytes = compressPhoto(file)
-                // Clean up temp file after compression
+            sendPhotoBytes(ws, file)
+        }
+    }
+
+    private fun sendPhotoBytes(ws: WebSocket, file: File): Boolean {
+        try {
+            val compressedBytes = compressPhoto(file)
+            val metaJson = JSONObject().apply {
+                put("type", "photo")
+            }.toString()
+
+            val binaryFrame = EnvelopeCodec.encodeBinaryFrame(
+                streamId = 0, // Photo Stream
+                frameSeq = 0,
+                flags = 1,
+                totalSize = compressedBytes.size.toLong(),
+                metaJson = metaJson,
+                payload = compressedBytes
+            )
+
+            val sent = ws.send(binaryFrame.toByteString())
+            return if (sent) {
                 if (file.exists()) file.delete()
-
-                val metaJson = JSONObject().apply {
-                    put("type", "photo")
-                }.toString()
-
-                val binaryFrame = EnvelopeCodec.encodeBinaryFrame(
-                    streamId = 0, // Photo Stream
-                    frameSeq = 0,
-                    flags = 1,
-                    totalSize = compressedBytes.size.toLong(),
-                    metaJson = metaJson,
-                    payload = compressedBytes
-                )
-
-                ws.send(binaryFrame.toByteString())
                 tracingLog("Photo pushed to PC clipboard successfully!")
-            } catch (e: Exception) {
-                if (file.exists()) file.delete()
-                Log.e("WsClient", "Push photo failed: ${e.message}")
+                true
+            } else {
+                Log.e("WsClient", "Failed to send photo, keeping in queue")
+                pendingPhotoUploads.add(file)
+                false
+            }
+        } catch (e: Exception) {
+            if (file.exists()) file.delete()
+            Log.e("WsClient", "Push photo failed: ${e.message}")
+            return false
+        }
+    }
+
+    private fun flushPendingUploads(ws: WebSocket) {
+        scope.launch(Dispatchers.IO) {
+            while (pendingPhotoUploads.isNotEmpty()) {
+                val file = pendingPhotoUploads.poll() ?: break
+                if (file.exists()) {
+                    Log.i("WsClient", "Uploading queued photo: ${file.name}")
+                    val sent = sendPhotoBytes(ws, file)
+                    if (!sent) {
+                        break
+                    }
+                }
             }
         }
     }
