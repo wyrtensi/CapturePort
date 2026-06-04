@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.path
@@ -385,318 +386,49 @@ fun ReceiversScreen(
 
         AnimatedVisibility(
             visible = showSettingsMenu,
-            modifier = Modifier.align(Alignment.TopCenter),
-            enter = slideInVertically(animationSpec = tween(300, easing = FastOutSlowInEasing)) { -it } + fadeIn(tween(200)),
-            exit = slideOutVertically(animationSpec = tween(250, easing = FastOutSlowInEasing)) { -it } + fadeOut(tween(150))
+            modifier = Modifier.align(Alignment.Center),
+            enter = fadeIn(tween(250)) + scaleIn(tween(300, easing = FastOutSlowInEasing)),
+            exit = fadeOut(tween(200)) + scaleOut(tween(250, easing = FastOutSlowInEasing))
         ) {
-            Column(
+            val isLandscape = currentRotation == 90 || currentRotation == 270
+            RotatedLayout(
+                rotation = iconRotation,
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .statusBarsPadding()
-                    .padding(horizontal = 10.dp)
-                    .clip(RoundedCornerShape(bottomStart = 28.dp, bottomEnd = 28.dp))
-                    .background(
-                        brush = Brush.verticalGradient(
-                            colors = listOf(
-                                Color(0xD9101114),
-                                Color(0xB5101114),
-                                Color(0x9E14161C)
-                            )
-                        )
-                    )
-                    .border(
-                        BorderStroke(1.dp, Color(0x24FFFFFF)),
-                        RoundedCornerShape(bottomStart = 28.dp, bottomEnd = 28.dp)
-                    )
-                    .padding(horizontal = 14.dp, vertical = 14.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
+                    .wrapContentSize()
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null
+                    ) { /* Consume clicks to prevent closing the menu when clicking on it */ }
             ) {
-                val isLandscape = currentRotation == 90 || currentRotation == 270
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = if (isLandscape) 32.dp else 48.dp, bottom = if (isLandscape) 8.dp else 14.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .weight(1f)
-                            .rotate(iconRotation)
-                    ) {
-                        Text(
-                            text = "Receiver Control",
-                            color = Color.White,
-                            fontSize = 18.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            maxLines = 1
-                        )
-                        Text(
-                            text = selectedDevice?.let { it.alias.ifBlank { it.name } } ?: "No PC selected",
-                            color = Color(0xA6FFFFFF),
-                            fontSize = 12.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                    SettingsStatusPill(
-                        text = connectionState,
-                        isPositive = connectionState == "Connected",
-                        modifier = Modifier.rotate(iconRotation)
-                    )
-                }
-
                 if (isLandscape) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 4.dp),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        Box(modifier = Modifier.weight(1f)) {
-                            SettingsSectionCard(
-                                title = "Camera capture",
-                                iconRotation = iconRotation,
-                                isLandscape = true
-                            ) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(top = 8.dp),
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                ) {
-                                    CameraCapturePolicy.values().forEach { policy ->
-                                        CompactSettingsChoiceTile(
-                                            title = policy.label.removePrefix("Camera: ").replaceFirstChar { it.uppercase() },
-                                            active = currentPolicy == policy,
-                                            modifier = Modifier.weight(1f),
-                                            iconRotation = iconRotation,
-                                            isLandscape = true,
-                                            onClick = { applyCameraMode(policy) }
-                                        )
-                                    }
-                                }
-                            }
-                        }
-
-                        Box(modifier = Modifier.weight(1f)) {
-                            SettingsSectionCard(
-                                title = "Connection route",
-                                iconRotation = iconRotation,
-                                isLandscape = true
-                            ) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(top = 8.dp),
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                ) {
-                                    ReceiverConnectionMode.values().forEach { mode ->
-                                        CompactSettingsChoiceTile(
-                                            title = when (mode) {
-                                                ReceiverConnectionMode.LocalOnly -> "Local"
-                                                ReceiverConnectionMode.LocalThenInternet -> "Mixed"
-                                                ReceiverConnectionMode.InternetOnly -> "Internet"
-                                            },
-                                            active = receiverConnectionMode == mode,
-                                            modifier = Modifier.weight(1f),
-                                            iconRotation = iconRotation,
-                                            isLandscape = true,
-                                            onClick = { applyConnectionMode(mode) }
-                                        )
-                                    }
-                                }
-                            }
-                        }
-
-                        Box(modifier = Modifier.weight(1f)) {
-                            SettingsSectionCard(
-                                title = "Screen rotation",
-                                iconRotation = iconRotation,
-                                isLandscape = true
-                            ) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(top = 8.dp),
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                ) {
-                                    RotationLockMode.values().forEach { mode ->
-                                        CompactSettingsChoiceTile(
-                                            title = when (mode) {
-                                                RotationLockMode.AUTO -> "Auto-Rotate"
-                                                RotationLockMode.PORTRAIT -> "Lock Portrait"
-                                                RotationLockMode.LANDSCAPE -> "Lock Landscape"
-                                            },
-                                            active = rotationLockMode == mode,
-                                            modifier = Modifier.weight(1f),
-                                            iconRotation = iconRotation,
-                                            isLandscape = true,
-                                            onClick = { rotationLockMode = mode }
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                } else {
-                    SettingsSectionCard(
-                        title = "Camera capture",
-                        iconRotation = iconRotation
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(top = 10.dp),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            CameraCapturePolicy.values().forEach { policy ->
-                                CompactSettingsChoiceTile(
-                                    title = policy.label.removePrefix("Camera: ").replaceFirstChar { it.uppercase() },
-                                    active = currentPolicy == policy,
-                                    modifier = Modifier.weight(1f),
-                                    iconRotation = iconRotation,
-                                    onClick = { applyCameraMode(policy) }
-                                )
-                            }
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    SettingsSectionCard(
-                        title = "Connection route",
-                        iconRotation = iconRotation
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(top = 10.dp),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            ReceiverConnectionMode.values().forEach { mode ->
-                                CompactSettingsChoiceTile(
-                                    title = when (mode) {
-                                        ReceiverConnectionMode.LocalOnly -> "Local"
-                                        ReceiverConnectionMode.LocalThenInternet -> "Mixed"
-                                        ReceiverConnectionMode.InternetOnly -> "Internet"
-                                    },
-                                    active = receiverConnectionMode == mode,
-                                    modifier = Modifier.weight(1f),
-                                    iconRotation = iconRotation,
-                                    onClick = { applyConnectionMode(mode) }
-                                )
-                            }
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    SettingsSectionCard(
-                        title = "Screen rotation",
-                        iconRotation = iconRotation
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(top = 10.dp),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            RotationLockMode.values().forEach { mode ->
-                                CompactSettingsChoiceTile(
-                                    title = when (mode) {
-                                        RotationLockMode.AUTO -> "Auto-Rotate"
-                                        RotationLockMode.PORTRAIT -> "Lock Portrait"
-                                        RotationLockMode.LANDSCAPE -> "Lock Landscape"
-                                    },
-                                    active = rotationLockMode == mode,
-                                    modifier = Modifier.weight(1f),
-                                    iconRotation = iconRotation,
-                                    onClick = { rotationLockMode = mode }
-                                )
-                            }
-                        }
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(if (isLandscape) 6.dp else 10.dp))
-
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(18.dp))
-                        .background(Color(0x991F2128))
-                        .border(BorderStroke(1.dp, Color(0xFF2C2E35)), RoundedCornerShape(18.dp))
-                        .clickable {
+                    LandscapeSettingsMenu(
+                        selectedDevice = selectedDevice,
+                        connectionState = connectionState,
+                        currentPolicy = currentPolicy,
+                        receiverConnectionMode = receiverConnectionMode,
+                        rotationLockMode = rotationLockMode,
+                        onCameraModeChange = { applyCameraMode(it) },
+                        onConnectionModeChange = { applyConnectionMode(it) },
+                        onRotationLockChange = { rotationLockMode = it },
+                        onNavigateToPairing = {
                             showSettingsMenu = false
                             onNavigateToPairing()
                         }
-                        .padding(
-                            horizontal = 16.dp,
-                            vertical = if (isLandscape) 8.dp else 11.dp
-                        ),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(if (isLandscape) 30.dp else 34.dp)
-                            .clip(CircleShape)
-                            .background(Color(0x12FFFFFF))
-                            .rotate(iconRotation),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Add,
-                            contentDescription = "Add",
-                            tint = Color.White,
-                            modifier = Modifier.size(if (isLandscape) 16.dp else 18.dp)
-                        )
-                    }
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column(
-                        modifier = Modifier
-                            .weight(1f)
-                            .rotate(iconRotation)
-                    ) {
-                        Text(
-                            text = "Add & Pair a New PC",
-                            color = Color.White,
-                            fontSize = if (isLandscape) 13.sp else 14.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            text = "Open scanner and pair another receiver",
-                            color = Color(0x8CFFFFFF),
-                            fontSize = if (isLandscape) 10.sp else 11.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                    Icon(
-                        imageVector = Icons.Default.KeyboardArrowDown,
-                        contentDescription = null,
-                        tint = Color.White.copy(alpha = 0.55f),
-                        modifier = Modifier.size(18.dp).rotate(iconRotation)
                     )
-                }
-
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = if (isLandscape) 8.dp else 12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "Tap outside or press Back to close",
-                        color = Color(0x73FFFFFF),
-                        fontSize = 10.sp,
-                        modifier = Modifier.weight(1f).rotate(iconRotation)
-                    )
-                    Box(
-                        modifier = Modifier
-                            .width(38.dp)
-                            .height(4.dp)
-                            .clip(RoundedCornerShape(2.dp))
-                            .background(Color(0x55FFFFFF))
+                } else {
+                    PortraitSettingsMenu(
+                        selectedDevice = selectedDevice,
+                        connectionState = connectionState,
+                        currentPolicy = currentPolicy,
+                        receiverConnectionMode = receiverConnectionMode,
+                        rotationLockMode = rotationLockMode,
+                        onCameraModeChange = { applyCameraMode(it) },
+                        onConnectionModeChange = { applyConnectionMode(it) },
+                        onRotationLockChange = { rotationLockMode = it },
+                        onNavigateToPairing = {
+                            showSettingsMenu = false
+                            onNavigateToPairing()
+                        }
                     )
                 }
             }
@@ -1397,14 +1129,13 @@ private fun SettingsStatusPill(
 @Composable
 private fun SettingsSectionCard(
     title: String,
+    modifier: Modifier = Modifier,
     caption: String = "",
-    iconRotation: Float = 0f,
     isLandscape: Boolean = false,
     content: @Composable ColumnScope.() -> Unit
 ) {
     Column(
-        modifier = Modifier
-            .fillMaxWidth()
+        modifier = modifier
             .clip(RoundedCornerShape(20.dp))
             .background(Color(0x261F2128))
             .border(BorderStroke(1.dp, Color(0x18FFFFFF)), RoundedCornerShape(20.dp))
@@ -1414,8 +1145,7 @@ private fun SettingsSectionCard(
             text = title,
             color = Color.White,
             fontSize = if (isLandscape) 12.sp else 13.sp,
-            fontWeight = FontWeight.ExtraBold,
-            modifier = Modifier.rotate(iconRotation)
+            fontWeight = FontWeight.ExtraBold
         )
         if (caption.isNotEmpty()) {
             Text(
@@ -1423,7 +1153,7 @@ private fun SettingsSectionCard(
                 color = Color(0x8CFFFFFF),
                 fontSize = if (isLandscape) 10.sp else 11.sp,
                 lineHeight = if (isLandscape) 13.sp else 15.sp,
-                modifier = Modifier.padding(top = 2.dp).rotate(iconRotation)
+                modifier = Modifier.padding(top = 2.dp)
             )
         }
         content()
@@ -1435,7 +1165,6 @@ private fun CompactSettingsChoiceTile(
     title: String,
     active: Boolean,
     modifier: Modifier = Modifier,
-    iconRotation: Float = 0f,
     isLandscape: Boolean = false,
     onClick: () -> Unit
 ) {
@@ -1456,7 +1185,6 @@ private fun CompactSettingsChoiceTile(
         horizontalArrangement = Arrangement.Center
     ) {
         Row(
-            modifier = Modifier.rotate(iconRotation),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Center
         ) {
@@ -1475,6 +1203,493 @@ private fun CompactSettingsChoiceTile(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
+        }
+    }
+}
+
+@Composable
+private fun RotatedLayout(
+    rotation: Float,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit
+) {
+    Layout(
+        content = content,
+        modifier = modifier.rotate(rotation)
+    ) { measurables, constraints ->
+        val isRotated = rotation == 90f || rotation == 270f
+        val childConstraints = if (isRotated) {
+            constraints.copy(
+                minWidth = constraints.minHeight,
+                maxWidth = constraints.maxHeight,
+                minHeight = constraints.minWidth,
+                maxHeight = constraints.maxWidth
+            )
+        } else {
+            constraints
+        }
+
+        val placeables = measurables.map { it.measure(childConstraints) }
+
+        val width = if (isRotated) {
+            placeables.maxOfOrNull { it.height } ?: 0
+        } else {
+            placeables.maxOfOrNull { it.width } ?: 0
+        }
+
+        val height = if (isRotated) {
+            placeables.maxOfOrNull { it.width } ?: 0
+        } else {
+            placeables.maxOfOrNull { it.height } ?: 0
+        }
+
+        layout(width, height) {
+            placeables.forEach { placeable ->
+                if (isRotated) {
+                    val x = (width - placeable.width) / 2
+                    val y = (height - placeable.height) / 2
+                    placeable.place(x, y)
+                } else {
+                    placeable.place(0, 0)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PortraitSettingsMenu(
+    selectedDevice: PairedDevice?,
+    connectionState: String,
+    currentPolicy: CameraCapturePolicy,
+    receiverConnectionMode: ReceiverConnectionMode,
+    rotationLockMode: RotationLockMode,
+    onCameraModeChange: (CameraCapturePolicy) -> Unit,
+    onConnectionModeChange: (ReceiverConnectionMode) -> Unit,
+    onRotationLockChange: (RotationLockMode) -> Unit,
+    onNavigateToPairing: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .width(340.dp)
+            .clip(RoundedCornerShape(28.dp))
+            .background(
+                brush = Brush.verticalGradient(
+                    colors = listOf(
+                        Color(0xFB16171C),
+                        Color(0xFB0F1013)
+                    )
+                )
+            )
+            .border(
+                BorderStroke(1.dp, Color(0x20FFFFFF)),
+                RoundedCornerShape(28.dp)
+            )
+            .padding(16.dp)
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            // Header Row
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Receiver Control",
+                        color = Color.White,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        maxLines = 1
+                    )
+                    Text(
+                        text = selectedDevice?.let { it.alias.ifBlank { it.name } } ?: "No PC selected",
+                        color = Color(0xA6FFFFFF),
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                SettingsStatusPill(
+                    text = connectionState,
+                    isPositive = connectionState == "Connected"
+                )
+            }
+
+            Spacer(modifier = Modifier.height(6.dp))
+
+            // 1. Camera Capture
+            SettingsSectionCard(title = "Camera capture") {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    CameraCapturePolicy.values().forEach { policy ->
+                        CompactSettingsChoiceTile(
+                            title = policy.label.removePrefix("Camera: ").replaceFirstChar { it.uppercase() },
+                            active = currentPolicy == policy,
+                            modifier = Modifier.weight(1f),
+                            onClick = { onCameraModeChange(policy) }
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // 2. Connection Route
+            SettingsSectionCard(title = "Connection route") {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    ReceiverConnectionMode.values().forEach { mode ->
+                        CompactSettingsChoiceTile(
+                            title = when (mode) {
+                                ReceiverConnectionMode.LocalOnly -> "Local"
+                                ReceiverConnectionMode.LocalThenInternet -> "Mixed"
+                                ReceiverConnectionMode.InternetOnly -> "Internet"
+                            },
+                            active = receiverConnectionMode == mode,
+                            modifier = Modifier.weight(1f),
+                            onClick = { onConnectionModeChange(mode) }
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // 3. Screen Rotation
+            SettingsSectionCard(title = "Screen rotation") {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    RotationLockMode.values().forEach { mode ->
+                        CompactSettingsChoiceTile(
+                            title = when (mode) {
+                                RotationLockMode.AUTO -> "Auto"
+                                RotationLockMode.PORTRAIT -> "Portrait"
+                                RotationLockMode.LANDSCAPE -> "Landscape"
+                            },
+                            active = rotationLockMode == mode,
+                            modifier = Modifier.weight(1f),
+                            onClick = { onRotationLockChange(mode) }
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(14.dp))
+
+            // Add & Pair Device
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(Color(0x18FFFFFF))
+                    .border(BorderStroke(1.dp, Color(0x18FFFFFF)), RoundedCornerShape(18.dp))
+                    .clickable { onNavigateToPairing() }
+                    .padding(horizontal = 14.dp, vertical = 11.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(30.dp)
+                        .clip(CircleShape)
+                        .background(Color(0x12FFFFFF)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Add,
+                        contentDescription = "Add",
+                        tint = Color.White,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+                Spacer(modifier = Modifier.width(10.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Add & Pair a New PC",
+                        color = Color.White,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "Open scanner and pair another receiver",
+                        color = Color(0x8CFFFFFF),
+                        fontSize = 10.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Hint
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Tap outside or press Back to close",
+                    color = Color(0x73FFFFFF),
+                    fontSize = 10.sp,
+                    modifier = Modifier.weight(1f)
+                )
+                Box(
+                    modifier = Modifier
+                        .width(30.dp)
+                        .height(4.dp)
+                        .clip(RoundedCornerShape(2.dp))
+                        .background(Color(0x33FFFFFF))
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun LandscapeSettingsMenu(
+    selectedDevice: PairedDevice?,
+    connectionState: String,
+    currentPolicy: CameraCapturePolicy,
+    receiverConnectionMode: ReceiverConnectionMode,
+    rotationLockMode: RotationLockMode,
+    onCameraModeChange: (CameraCapturePolicy) -> Unit,
+    onConnectionModeChange: (ReceiverConnectionMode) -> Unit,
+    onRotationLockChange: (RotationLockMode) -> Unit,
+    onNavigateToPairing: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .width(580.dp)
+            .height(280.dp)
+            .clip(RoundedCornerShape(24.dp))
+            .background(
+                brush = Brush.verticalGradient(
+                    colors = listOf(
+                        Color(0xFB16171C),
+                        Color(0xFB0F1013)
+                    )
+                )
+            )
+            .border(
+                BorderStroke(1.dp, Color(0x20FFFFFF)),
+                RoundedCornerShape(24.dp)
+            )
+            .padding(14.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxSize(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            // Column 1: Header, Add Device, and Hint
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight(),
+                verticalArrangement = Arrangement.SpaceBetween
+            ) {
+                // Header Info
+                Column(
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = "Receiver Control",
+                            color = Color.White,
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            maxLines = 1
+                        )
+                        SettingsStatusPill(
+                            text = connectionState,
+                            isPositive = connectionState == "Connected"
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = selectedDevice?.let { it.alias.ifBlank { it.name } } ?: "No PC selected",
+                        color = Color(0xA6FFFFFF),
+                        fontSize = 11.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+
+                // Add Device Button
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(Color(0x18FFFFFF))
+                        .border(BorderStroke(1.dp, Color(0x18FFFFFF)), RoundedCornerShape(14.dp))
+                        .clickable { onNavigateToPairing() }
+                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(24.dp)
+                            .clip(CircleShape)
+                            .background(Color(0x12FFFFFF)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Add,
+                            contentDescription = "Add",
+                            tint = Color.White,
+                            modifier = Modifier.size(14.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Column {
+                        Text(
+                            text = "Add & Pair a New PC",
+                            color = Color.White,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "Pair another receiver",
+                            color = Color(0x8CFFFFFF),
+                            fontSize = 9.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+
+                // Hint
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Tap outside/Back to close",
+                        color = Color(0x66FFFFFF),
+                        fontSize = 9.sp,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Box(
+                        modifier = Modifier
+                            .width(24.dp)
+                            .height(3.dp)
+                            .clip(RoundedCornerShape(1.5.dp))
+                            .background(Color(0x22FFFFFF))
+                    )
+                }
+            }
+
+            // Column 2: Camera Capture and Connection Route
+            Column(
+                modifier = Modifier
+                    .weight(1.1f)
+                    .fillMaxHeight(),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                // 1. Camera Capture
+                SettingsSectionCard(
+                    title = "Camera capture",
+                    isLandscape = true,
+                    modifier = Modifier.weight(1f).fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        CameraCapturePolicy.values().forEach { policy ->
+                            CompactSettingsChoiceTile(
+                                title = policy.label.removePrefix("Camera: ").replaceFirstChar { it.uppercase() },
+                                active = currentPolicy == policy,
+                                isLandscape = true,
+                                modifier = Modifier.weight(1f),
+                                onClick = { onCameraModeChange(policy) }
+                            )
+                        }
+                    }
+                }
+
+                // 2. Connection Route
+                SettingsSectionCard(
+                    title = "Connection route",
+                    isLandscape = true,
+                    modifier = Modifier.weight(1f).fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        ReceiverConnectionMode.values().forEach { mode ->
+                            CompactSettingsChoiceTile(
+                                title = when (mode) {
+                                    ReceiverConnectionMode.LocalOnly -> "Local"
+                                    ReceiverConnectionMode.LocalThenInternet -> "Mixed"
+                                    ReceiverConnectionMode.InternetOnly -> "Internet"
+                                },
+                                active = receiverConnectionMode == mode,
+                                isLandscape = true,
+                                modifier = Modifier.weight(1f),
+                                onClick = { onConnectionModeChange(mode) }
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Column 3: Screen Rotation
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+            ) {
+                SettingsSectionCard(
+                    title = "Screen rotation",
+                    isLandscape = true,
+                    modifier = Modifier.fillMaxSize()
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 6.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        RotationLockMode.values().forEach { mode ->
+                            CompactSettingsChoiceTile(
+                                title = when (mode) {
+                                    RotationLockMode.AUTO -> "Auto"
+                                    RotationLockMode.PORTRAIT -> "Portrait"
+                                    RotationLockMode.LANDSCAPE -> "Landscape"
+                                },
+                                active = rotationLockMode == mode,
+                                isLandscape = true,
+                                modifier = Modifier.fillMaxWidth(),
+                                onClick = { onRotationLockChange(mode) }
+                            )
+                        }
+                    }
+                }
+            }
         }
     }
 }
