@@ -84,19 +84,23 @@ class CameraController(
         val file = File(context.cacheDir, "CP_cap_${System.currentTimeMillis()}.jpg")
         val outputOptions = ImageCapture.OutputFileOptions.Builder(file).build()
 
-        cameraController.takePicture(
-            outputOptions,
-            mainExecutor,
-            object : ImageCapture.OnImageSavedCallback {
-                override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
-                    onSuccess(file)
-                }
+        try {
+            cameraController.takePicture(
+                outputOptions,
+                mainExecutor,
+                object : ImageCapture.OnImageSavedCallback {
+                    override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
+                        onSuccess(file)
+                    }
 
-                override fun onError(exception: ImageCaptureException) {
-                    onError(exception)
+                    override fun onError(exception: ImageCaptureException) {
+                        onError(exception)
+                    }
                 }
-            }
-        )
+            )
+        } catch (e: Exception) {
+            onError(e)
+        }
     }
 
     // Start video recording at 720p H.264

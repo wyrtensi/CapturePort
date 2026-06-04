@@ -93,6 +93,18 @@ class CapturePortApp : Application() {
     override fun onCreate() {
         super.onCreate()
         instance = this
+
+        // Clean up temporary capture files in cache directory
+        try {
+            cacheDir.listFiles()?.forEach { file ->
+                if (file.name.startsWith("CP_")) {
+                    file.delete()
+                }
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("CapturePortApp", "Failed to clean up cache: ${e.message}")
+        }
+
         val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
         cameraCapturePolicy = prefs.getString(KEY_CAMERA_POLICY, null)
             ?.let { runCatching { CameraCapturePolicy.valueOf(it) }.getOrNull() }

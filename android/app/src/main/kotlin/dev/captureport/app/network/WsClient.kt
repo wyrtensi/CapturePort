@@ -269,25 +269,32 @@ class WsClient(
                             }
                             isRecordingVideo = true
                             scope.launch(Dispatchers.Main) {
-                                var videoFile: java.io.File? = null
-                                videoFile = activeCam.startVideoRecording { event ->
-                                    if (event is VideoRecordEvent.Finalize) {
-                                        isRecordingVideo = false
-                                        if (!event.hasError()) {
-                                            val intent = Intent(context, TransferService::class.java).apply {
-                                                putExtra("file_path", videoFile?.absolutePath)
-                                                putExtra("request_id", envelope.id)
-                                            }
-                                            ContextCompat.startForegroundService(context, intent)
-                                        } else {
-                                            scope.launch(Dispatchers.IO) {
-                                                sendCaptureRejected(ws, envelope.id, "Video recording error: ${event.error}")
+                                try {
+                                    var videoFile: java.io.File? = null
+                                    videoFile = activeCam.startVideoRecording { event ->
+                                        if (event is VideoRecordEvent.Finalize) {
+                                            isRecordingVideo = false
+                                            if (!event.hasError()) {
+                                                val intent = Intent(context, TransferService::class.java).apply {
+                                                    putExtra("file_path", videoFile?.absolutePath)
+                                                    putExtra("request_id", envelope.id)
+                                                }
+                                                ContextCompat.startForegroundService(context, intent)
+                                            } else {
+                                                scope.launch(Dispatchers.IO) {
+                                                    sendCaptureRejected(ws, envelope.id, "Video recording error: ${event.error}")
+                                                }
                                             }
                                         }
                                     }
+                                    delay(duration * 1000)
+                                    activeCam.stopVideoRecording()
+                                } catch (e: Exception) {
+                                    isRecordingVideo = false
+                                    scope.launch(Dispatchers.IO) {
+                                        sendCaptureRejected(ws, envelope.id, "Failed to start recording: ${e.message}")
+                                    }
                                 }
-                                delay(duration * 1000)
-                                activeCam.stopVideoRecording()
                             }
                         } else {
                             scope.launch(Dispatchers.IO) {
@@ -452,7 +459,7 @@ class WsClient(
         } catch (e: Exception) {
             if (file.exists()) file.delete()
             Log.e("WsClient", "Push photo failed: ${e.message}")
-            return false
+            return true
         }
     }
 

@@ -95,7 +95,7 @@ class TransferService : Service() {
                     if (!kotlinx.coroutines.currentCoroutineContext().isActive) break
 
                     val chunkBytes = if (bytesRead < chunkSize) {
-                        buffer.take(bytesRead).toByteArray()
+                        buffer.copyOfRange(0, bytesRead)
                     } else {
                         buffer
                     }
