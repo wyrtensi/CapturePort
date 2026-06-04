@@ -1,7 +1,7 @@
 <h1 align="center">CapturePort</h1>
 
 <p align="center">
-  <img src="pc/src-tauri/icons/icon.png" width="128" height="128" alt="CapturePort Logo" />
+  <img src="pc/src-tauri/icons/icon.png" width="256" height="256" alt="CapturePort Logo" />
 </p>
 
 <p align="center">
