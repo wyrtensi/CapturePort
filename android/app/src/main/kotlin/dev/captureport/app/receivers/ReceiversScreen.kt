@@ -344,7 +344,7 @@ fun ReceiversScreen(
                             CompactSettingsChoiceTile(
                                 title = when (mode) {
                                     ReceiverConnectionMode.LocalOnly -> "Local"
-                                    ReceiverConnectionMode.LocalThenInternet -> "Through"
+                                    ReceiverConnectionMode.LocalThenInternet -> "Mixed"
                                     ReceiverConnectionMode.InternetOnly -> "Internet"
                                 },
                                 active = receiverConnectionMode == mode,

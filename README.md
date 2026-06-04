@@ -93,7 +93,7 @@ CapturePort is engineered from the ground up for strict local privacy:
 
 ### Connection Route Modes
 - **Local** ("Local only"): Forces the socket to only try LAN IP addresses.
-- **Through** ("Through internet"): Sequentially tries all discovered local LAN IPs first, then falls back to the external hostname.
+- **Mixed** ("Through internet"): Sequentially tries all discovered local LAN IPs first, then falls back to the external hostname.
 - **Internet** ("Internet only"): Bypasses LAN hosts entirely and directly connects to the configured external host and port.
 
 ### Receiver Controls
