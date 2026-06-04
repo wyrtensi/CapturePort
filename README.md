@@ -27,53 +27,46 @@ CapturePort operates on a decoupled client-server model over local network WebSo
 The following diagram outlines the relationship between the Compose-based Android application, the local Tauri 2 desktop receiver (which directly handles stdio JSON-RPC for MCP), the axum server layer, and the host AI environment:
 
 ```mermaid
-graph TD
-    %% Custom Sleek Styling
-    classDef android fill:#0E2A1B,stroke:#3DDC84,stroke-width:2px,color:#FFFFFF;
-    classDef pc fill:#0F172A,stroke:#38BDF8,stroke-width:2px,color:#FFFFFF;
-    classDef agent fill:#1E1B4B,stroke:#818CF8,stroke-width:2px,color:#FFFFFF;
-
-    subgraph Android["📱 Android Client (Kotlin + Compose)"]
-        UI(["🎨 Jetpack Compose UI"]):::android
-        CamX[["📷 CameraX Controller"]]:::android
-        NSD["🔍 mDNS Service Discovery"]:::android
-        UDP[("📡 UDP Discovery Listener")]:::android
-        WSClient(["🔌 OkHttp WS Client"]):::android
-        KM[["🔑 Android Keystore KeyManager"]]:::android
+graph LR
+    subgraph Agent["Host AI Environment (MCP)"]
+        Claude["Claude / Cursor"]
     end
 
-    subgraph PC["💻 PC Tauri Environment (Rust + Svelte)"]
-        Tray(["📥 System Tray / Svelte UI"]):::pc
-        App[["⚙️ Tauri 2 Core"]]:::pc
-        Axum[["🌐 Axum HTTP & WS Server"]]:::pc
-        WSHandler(["⚡ WebSocket Handler"]):::pc
-        UDPBeacon[("📡 UDP Broadcast Emitter")]:::pc
+    subgraph PC["PC Receiver (Tauri + Axum)"]
+        Tray["System Tray UI"]
+        App["Tauri Core"]
+        Axum["Axum HTTP Server"]
+        WSHandler["WebSocket Handler"]
+        UDPBeacon["UDP Broadcast Emitter"]
     end
 
-    subgraph Agent["🤖 Host AI Environment (MCP)"]
-        Claude(["🧠 Claude Desktop / Cursor"]):::agent
+    subgraph Android["Android Client (Kotlin + Compose)"]
+        UI["Compose UI"]
+        CamX["CameraX Controller"]
+        NSD["mDNS Discovery"]
+        UDP["UDP Discovery Listener"]
+        WSClient["OkHttp WS Client"]
+        KM["Android Keystore"]
     end
 
-    %% Internal Android Relationships
+    %% Internal Android Flow
     UI --> CamX
     UI --> NSD
     UI --> UDP
     CamX --> WSClient
     KM --> WSClient
 
-    %% Internal PC Relationships
+    %% Internal PC Flow
     Tray --> App
     App --> Axum
     Axum --> WSHandler
     App --> UDPBeacon
 
-    %% Stdio MCP IPC
-    Claude -->|"Stdio JSON-RPC"| App
-
-    %% Cross-Platform Local Network Connections
+    %% Cross-Platform IPC & Network Connections
+    Claude -->|"stdio JSON-RPC"| App
     WSClient <-->|"WebSocket (ws://)"| WSHandler
     NSD -.->|"mDNS Discovery"| Axum
-    UDPBeacon -.->|"UDP Broadcasts (Port 5354)"| UDP
+    UDPBeacon -.->|"UDP Broadcast (Port 5354)"| UDP
 ```
 
 ### Cryptographic Mutual Pairing Flow
@@ -83,19 +76,14 @@ To ensure complete out-of-band trust validation, CapturePort relies on a **two-w
 ```mermaid
 sequenceDiagram
     autonumber
-    actor User as 👤 User
-    participant PC as 💻 PC Receiver (Tauri / Axum)
-    participant Android as 📱 Android Client (Compose)
+    actor User
+    participant PC as PC Receiver (Tauri / Axum)
+    participant Android as Android Client (Compose)
 
-    Note over PC: 1. Setup & QR Generation
     PC->>PC: Generate Ed25519 Keypair & Active Nonce
     PC->>PC: Render QR Code (PC PublicKey, Nonce, Hosts, Port)
-    
-    Note over User, Android: 2. Scanning & Discovery
     User->>Android: Scan QR Code via ML-Kit Scanner
     Android->>Android: Retrieve Android Ed25519 Keypair
-    
-    Note over Android, PC: 3. Mutual Cryptographic Authentication
     Android->>PC: WebSocket Connect & Send "hello" (PC Nonce signed by PC Key)
     PC->>PC: Verify Nonce and Signature
     PC->>Android: Send "challenge" (Random Nonce PC)
@@ -103,13 +91,9 @@ sequenceDiagram
     Android->>PC: Send Challenge Response (Signature)
     PC->>PC: Verify Android Signature with Android PublicKey & Calculate Fingerprint
     PC->>Android: Send "verified" status with fingerprint & Device ID
-    
-    Note over User, Android: 4. Out-of-band Confirmation
     Android->>Android: Display Fingerprint verification dialog to User
     User->>Android: Click "Confirm" in Android App
     Android->>PC: Send "pair_confirm" Request
-    
-    Note over PC, Android: 5. Pairing Completed
     PC->>PC: Save Android credentials to disk
     PC->>Android: Send "paired" response with access Token
     Android->>Android: Save PC credentials to DataStore
