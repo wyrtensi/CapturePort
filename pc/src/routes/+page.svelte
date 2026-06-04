@@ -14,6 +14,30 @@
     return "main";
   }
 
+  async function waitForStyles(): Promise<void> {
+    if (typeof window === "undefined") return;
+    try {
+      if (document.fonts) {
+        await document.fonts.ready;
+      }
+    } catch (e) {
+      console.warn("Fonts load failed:", e);
+    }
+    await new Promise<void>((resolve) => {
+      const startTime = Date.now();
+      const check = () => {
+        const bodyStyle = window.getComputedStyle(document.body);
+        const fontLoaded = bodyStyle.fontFamily.includes("Plus Jakarta Sans");
+        if (fontLoaded || Date.now() - startTime > 1500) {
+          resolve();
+        } else {
+          requestAnimationFrame(check);
+        }
+      };
+      check();
+    });
+  }
+
   // Svelte 5 Reactive States
   let windowLabel = $state<WindowView>("main");
   let pairingQr = $state("");
@@ -257,6 +281,7 @@
 
       await loadView(initialView);
       await loadPairedDevices();
+      await waitForStyles();
       setTimeout(() => {
         appReady = true;
         dismissStartupLoader();

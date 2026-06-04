@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.1] - 2026-06-04
+### Fixed
+- Fixed bug where a system-type notification badge (like a '1') was sometimes displayed on the Android launcher app icon (the camera icon) during background file transfers, by disabling notification badges on the transfer channel.
+- Fixed a flash of unstyled content (FOUC) when starting the desktop PC application, by waiting for fonts (`document.fonts.ready`) and CSS styles to be fully loaded and applied before dismissing the startup loader.
+
 ## [0.3.0] - 2026-06-04
 ### Added
 - Aligned REC timer badge with the connection route status badge vertically on the Android screen.
