@@ -367,6 +367,343 @@ fun ReceiversScreen(
                 )
         )
 
+        // Dashboard overlay
+        AnimatedVisibility(
+            visible = !showSettingsMenu,
+            modifier = Modifier.align(Alignment.BottomCenter),
+            enter = fadeIn(animationSpec = tween(200)),
+            exit = fadeOut(animationSpec = tween(150))
+        ) {
+            Column(
+                modifier = Modifier
+                    .navigationBarsPadding()
+                    .padding(16.dp)
+                    .fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 4.dp, bottom = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = "Paired PC Receivers",
+                        color = Color(0xFFDEE0FF), fontSize = 12.sp, fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.weight(1f))
+                }
+
+                if (pairedDevices.isEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(80.dp)
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(
+                                brush = Brush.linearGradient(
+                                    colors = listOf(Color(0x1E1F2128), Color(0x3E1F2128))
+                                )
+                            )
+                            .border(
+                                width = 1.dp,
+                                brush = Brush.linearGradient(
+                                    colors = listOf(Color(0x20FFFFFF), Color(0x08FFFFFF))
+                                ),
+                                shape = RoundedCornerShape(16.dp)
+                            )
+                            .clickable { onNavigateToPairing() },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Add,
+                                contentDescription = "Add",
+                                tint = Color(0xFFA4B4FF),
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Add & Pair a New PC",
+                                color = Color(0xFFDEE0FF),
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                } else {
+                    val receiverRowState = rememberLazyListState()
+                    Box(modifier = Modifier.fillMaxWidth()) {
+                        LazyRow(
+                            state = receiverRowState,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            contentPadding = PaddingValues(end = 8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            items(pairedDevices, key = { it.id }) { device ->
+                                val isSelected = selectedDevice?.id == device.id
+                                val borderCol = if (isSelected) Color(0xFF3B5BFF) else Color(0xFF2C2E35)
+                                val bgCol = if (isSelected) Color(0x661F2128) else Color(0x331F2128)
+                                val isCollapsed = collapsedDevices[device.id] ?: true
+                                val displayName = device.alias.ifBlank { device.name }
+
+                                val cardWidthModifier = if (pairedDevices.size == 1) {
+                                    Modifier.fillParentMaxWidth()
+                                } else {
+                                    Modifier.fillParentMaxWidth(0.8f).widthIn(max = 280.dp)
+                                }
+
+                                Row(
+                                    modifier = Modifier
+                                        .then(cardWidthModifier)
+                                        .clip(RoundedCornerShape(16.dp))
+                                        .background(bgCol)
+                                        .border(BorderStroke(1.dp, borderCol), RoundedCornerShape(16.dp))
+                                        .clickable { viewModel.selectDevice(device) }
+                                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(
+                                        verticalArrangement = Arrangement.Center
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            if (isSelected) {
+                                                val activeStatusColor = if (connectionState == "Connected") Color(0xFF4CAF50) else Color(0xFFFFC107)
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(6.dp)
+                                                        .clip(CircleShape)
+                                                        .background(activeStatusColor)
+                                                )
+                                                Spacer(modifier = Modifier.width(6.dp))
+                                            }
+                                            Text(
+                                                text = displayName,
+                                                color = Color.White,
+                                                fontSize = 14.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                maxLines = 1,
+                                                modifier = Modifier.weight(1f, fill = false)
+                                            )
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            IconButton(
+                                                onClick = { collapsedDevices[device.id] = !isCollapsed },
+                                                modifier = Modifier.size(20.dp)
+                                            ) {
+                                                Icon(
+                                                    imageVector = if (isCollapsed) Icons.Default.KeyboardArrowDown else Icons.Default.KeyboardArrowUp,
+                                                    contentDescription = if (isCollapsed) "Expand card" else "Collapse card",
+                                                    tint = Color(0xFF8C8E96),
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                            }
+                                        }
+                                        if (!isCollapsed) {
+                                            Spacer(modifier = Modifier.height(6.dp))
+                                            val hosts = device.localHosts.ifBlank { device.host }.split(',').map { it.trim() }.filter { it.isNotEmpty() }
+                                            val firstHost = hosts.firstOrNull() ?: device.host
+                                            val moreCount = (hosts.size - 1).coerceAtLeast(0)
+                                            val hostText = if (moreCount > 0) "$firstHost +$moreCount" else firstHost
+                                            Text(
+                                                text = "${device.os.uppercase()} · $hostText",
+                                                color = Color(0xFF8C8E96),
+                                                fontSize = 11.sp,
+                                                fontFamily = FontFamily.SansSerif
+                                            )
+                                            Spacer(modifier = Modifier.height(10.dp))
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                            ) {
+                                                IconButton(
+                                                    onClick = { deviceToEditId = device.id },
+                                                    modifier = Modifier
+                                                        .size(32.dp)
+                                                        .clip(CircleShape)
+                                                        .background(Color(0x263B5BFF), CircleShape)
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.Edit,
+                                                        contentDescription = "Edit device IP",
+                                                        tint = Color(0xFFA4B4FF),
+                                                        modifier = Modifier.size(14.dp)
+                                                    )
+                                                }
+                                                Spacer(modifier = Modifier.weight(1f))
+                                                IconButton(
+                                                    onClick = { deviceToDeleteId = device.id },
+                                                    modifier = Modifier
+                                                        .size(32.dp)
+                                                        .clip(CircleShape)
+                                                        .background(Color(0x26FF3B30), CircleShape)
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.Delete,
+                                                        contentDescription = "Delete device",
+                                                        tint = Color(0xFFFF8A80),
+                                                        modifier = Modifier.size(14.dp)
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        // Right-edge pocket marker suggests the row continues off-screen
+                        if (receiverRowState.canScrollForward) {
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.CenterEnd)
+                                    .width(2.dp)
+                                    .height(64.dp)
+                                    .background(Color(0x663B5BFF), RoundedCornerShape(2.dp))
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(24.dp))
+
+                // Action Buttons
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // Record Video
+                    Button(
+                        onClick = {
+                            if (isRecording) {
+                                cameraController.stopVideoRecording()
+                            } else {
+                                val hasAudioPermission = ContextCompat.checkSelfPermission(
+                                    context,
+                                    android.Manifest.permission.RECORD_AUDIO
+                                ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+
+                                if (!hasAudioPermission) {
+                                    Toast.makeText(context, "Microphone permission is required for video recording", Toast.LENGTH_LONG).show()
+                                } else {
+                                    try {
+                                        cameraController.startVideoRecording { event ->
+                                            if (event is VideoRecordEvent.Finalize) {
+                                                isRecording = false
+                                                val outputUri = event.outputResults.outputUri
+                                                val filePath = outputUri.path
+                                                if (!event.hasError() && filePath != null) {
+                                                    val intent = Intent(context, TransferService::class.java).apply {
+                                                        putExtra("file_path", filePath)
+                                                        putExtra("request_id", "user_push_video")
+                                                    }
+                                                    ContextCompat.startForegroundService(context, intent)
+                                                    Toast.makeText(context, "Streaming video to PC...", Toast.LENGTH_SHORT).show()
+                                                } else {
+                                                    if (event.hasError()) {
+                                                        Toast.makeText(context, "Recording error: ${event.error}", Toast.LENGTH_SHORT).show()
+                                                    }
+                                                    filePath?.let { java.io.File(it).delete() }
+                                                }
+                                            }
+                                        }
+                                        isRecording = true
+                                    } catch (e: Exception) {
+                                        Toast.makeText(context, "Failed to start recording: ${e.message}", Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (isRecording) Color(0xFF2D1A1A) else Color(0x991F2128)
+                        ),
+                        shape = RoundedCornerShape(16.dp),
+                        border = BorderStroke(
+                            1.dp,
+                            if (isRecording) Color(0xFFFF8A80) else Color(0xFF2C2E35)
+                        ),
+                        contentPadding = PaddingValues(horizontal = 12.dp),
+                        modifier = Modifier
+                            .weight(1.0f)
+                            .height(58.dp)
+                    ) {
+                        Icon(
+                            imageVector = VideocamIcon,
+                            contentDescription = if (isRecording) "Stop Video Recording" else "Record Video",
+                            tint = if (isRecording) Color(0xFFFF8A80) else Color.White,
+                            modifier = Modifier.size(24.dp).rotate(iconRotation)
+                        )
+                    }
+
+                    // Snap Photo (Center, main action, larger)
+                    Button(
+                        onClick = {
+                            cameraController.takePhoto(
+                                onSuccess = { file ->
+                                    val ws = app.wsClient
+                                    if (ws != null) {
+                                        ws.pushPhoto(file)
+                                        if (connectionState == "Connected") {
+                                            Toast.makeText(context, "Photo copied to PC clipboard!", Toast.LENGTH_SHORT).show()
+                                        } else {
+                                            Toast.makeText(context, "Saved locally. Will upload once connected.", Toast.LENGTH_LONG).show()
+                                        }
+                                    } else {
+                                        Toast.makeText(context, "Saved locally. Receiver not set up.", Toast.LENGTH_LONG).show()
+                                    }
+                                },
+                                onError = { err ->
+                                    Toast.makeText(context, "Photo capture failed: ${err.message}", Toast.LENGTH_SHORT).show()
+                                }
+                            )
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent),
+                        shape = RoundedCornerShape(16.dp),
+                        contentPadding = PaddingValues(0.dp),
+                        modifier = Modifier
+                            .weight(1.4f)
+                            .height(64.dp)
+                            .background(
+                                brush = Brush.linearGradient(
+                                    colors = listOf(Color(0xFF3B5BFF), Color(0xFF6B82FF))
+                                ),
+                                shape = RoundedCornerShape(16.dp)
+                            )
+                    ) {
+                        Icon(
+                            imageVector = CameraIcon,
+                            contentDescription = "Snap Photo",
+                            tint = Color.White,
+                            modifier = Modifier.size(28.dp).rotate(iconRotation)
+                        )
+                    }
+
+                    // Gallery Upload (Right)
+                    Button(
+                        onClick = { galleryLauncher.launch("image/*") },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0x991F2128)),
+                        shape = RoundedCornerShape(16.dp),
+                        border = BorderStroke(1.dp, Color(0xFF2C2E35)),
+                        contentPadding = PaddingValues(horizontal = 12.dp),
+                        modifier = Modifier
+                            .weight(1.0f)
+                            .height(58.dp)
+                    ) {
+                        Icon(
+                            imageVector = ImageIcon,
+                            contentDescription = "Gallery",
+                            tint = Color.White,
+                            modifier = Modifier.size(24.dp).rotate(iconRotation)
+                        )
+                    }
+                }
+            }
+        }
+
         // Settings dropdown overlay
         AnimatedVisibility(
             visible = showSettingsMenu,
@@ -376,7 +713,7 @@ fun ReceiversScreen(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color(0x52000000))
+                    .background(Color(0xE60A0B0D))
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null
@@ -519,336 +856,6 @@ fun ReceiversScreen(
                         contentDescription = "Receiver settings",
                         tint = Color.White.copy(alpha = 0.5f),
                         modifier = Modifier.size(24.dp)
-                    )
-                }
-            }
-        }
-        // Dashboard overlay
-        Column(
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .navigationBarsPadding()
-                .padding(16.dp)
-                .fillMaxWidth()
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(start = 4.dp, bottom = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Text(
-                    text = "Paired PC Receivers",
-                    color = Color(0xFFDEE0FF), fontSize = 12.sp, fontWeight = FontWeight.Bold
-                )
-                Spacer(modifier = Modifier.weight(1f))
-            }
-
-            if (pairedDevices.isEmpty()) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(80.dp)
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(
-                            brush = Brush.linearGradient(
-                                colors = listOf(Color(0x1E1F2128), Color(0x3E1F2128))
-                            )
-                        )
-                        .border(
-                            width = 1.dp,
-                            brush = Brush.linearGradient(
-                                colors = listOf(Color(0x20FFFFFF), Color(0x08FFFFFF))
-                            ),
-                            shape = RoundedCornerShape(16.dp)
-                        )
-                        .clickable { onNavigateToPairing() },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Add,
-                            contentDescription = "Add",
-                            tint = Color(0xFFA4B4FF),
-                            modifier = Modifier.size(20.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = "Add & Pair a New PC",
-                            color = Color(0xFFDEE0FF),
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                }
-            } else {
-                val receiverRowState = rememberLazyListState()
-                Box(modifier = Modifier.fillMaxWidth()) {
-                    LazyRow(
-                        state = receiverRowState,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        contentPadding = PaddingValues(end = 8.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                    items(pairedDevices, key = { it.id }) { device ->
-                        val isSelected = selectedDevice?.id == device.id
-                        val borderCol = if (isSelected) Color(0xFF3B5BFF) else Color(0xFF2C2E35)
-                        val bgCol = if (isSelected) Color(0x661F2128) else Color(0x331F2128)
-                        val isCollapsed = collapsedDevices[device.id] ?: true
-                        val displayName = device.alias.ifBlank { device.name }
-
-                        val cardWidthModifier = if (pairedDevices.size == 1) {
-                            Modifier.fillParentMaxWidth()
-                        } else {
-                            Modifier.fillParentMaxWidth(0.8f).widthIn(max = 280.dp)
-                        }
-
-                        Row(
-                            modifier = Modifier
-                                .then(cardWidthModifier)
-                                .clip(RoundedCornerShape(16.dp))
-                                .background(bgCol)
-                                .border(BorderStroke(1.dp, borderCol), RoundedCornerShape(16.dp))
-                                .clickable { viewModel.selectDevice(device) }
-                                .padding(horizontal = 14.dp, vertical = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(
-                                verticalArrangement = Arrangement.Center
-                            ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    if (isSelected) {
-                                        val activeStatusColor = if (connectionState == "Connected") Color(0xFF4CAF50) else Color(0xFFFFC107)
-                                        Box(
-                                            modifier = Modifier
-                                                .size(6.dp)
-                                                .clip(CircleShape)
-                                                .background(activeStatusColor)
-                                        )
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                    }
-                                    Text(
-                                        text = displayName,
-                                        color = Color.White,
-                                        fontSize = 14.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        maxLines = 1,
-                                        modifier = Modifier.weight(1f, fill = false)
-                                    )
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    IconButton(
-                                        onClick = { collapsedDevices[device.id] = !isCollapsed },
-                                        modifier = Modifier.size(20.dp)
-                                    ) {
-                                        Icon(
-                                            imageVector = if (isCollapsed) Icons.Default.KeyboardArrowDown else Icons.Default.KeyboardArrowUp,
-                                            contentDescription = if (isCollapsed) "Expand card" else "Collapse card",
-                                            tint = Color(0xFF8C8E96),
-                                            modifier = Modifier.size(16.dp)
-                                        )
-                                    }
-                                }
-                                if (!isCollapsed) {
-                                    Spacer(modifier = Modifier.height(6.dp))
-                                    val hosts = device.localHosts.ifBlank { device.host }.split(',').map { it.trim() }.filter { it.isNotEmpty() }
-                                    val firstHost = hosts.firstOrNull() ?: device.host
-                                    val moreCount = (hosts.size - 1).coerceAtLeast(0)
-                                    val hostText = if (moreCount > 0) "$firstHost +$moreCount" else firstHost
-                                    Text(
-                                        text = "${device.os.uppercase()} Â· $hostText",
-                                        color = Color(0xFF8C8E96),
-                                        fontSize = 11.sp,
-                                        fontFamily = FontFamily.SansSerif
-                                    )
-                                    Spacer(modifier = Modifier.height(10.dp))
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                    ) {
-                                        IconButton(
-                                            onClick = { deviceToEditId = device.id },
-                                            modifier = Modifier
-                                                .size(32.dp)
-                                                .clip(CircleShape)
-                                                .background(Color(0x263B5BFF), CircleShape)
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.Edit,
-                                                contentDescription = "Edit device IP",
-                                                tint = Color(0xFFA4B4FF),
-                                                modifier = Modifier.size(14.dp)
-                                            )
-                                        }
-                                        Spacer(modifier = Modifier.weight(1f))
-                                        IconButton(
-                                            onClick = { deviceToDeleteId = device.id },
-                                            modifier = Modifier
-                                                .size(32.dp)
-                                                .clip(CircleShape)
-                                                .background(Color(0x26FF3B30), CircleShape)
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.Delete,
-                                                contentDescription = "Delete device",
-                                                tint = Color(0xFFFF8A80),
-                                                modifier = Modifier.size(14.dp)
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                    // Right-edge pocket marker suggests the row continues off-screen
-                    if (receiverRowState.canScrollForward) {
-                        Box(
-                            modifier = Modifier
-                                .align(Alignment.CenterEnd)
-                                .width(2.dp)
-                                .height(64.dp)
-                                .background(Color(0x663B5BFF), RoundedCornerShape(2.dp))
-                        )
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(24.dp))
-
-            // Action Buttons
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                // Record Video
-                Button(
-                    onClick = {
-                        if (isRecording) {
-                            cameraController.stopVideoRecording()
-                        } else {
-                            val hasAudioPermission = ContextCompat.checkSelfPermission(
-                                context,
-                                android.Manifest.permission.RECORD_AUDIO
-                            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
-
-                            if (!hasAudioPermission) {
-                                Toast.makeText(context, "Microphone permission is required for video recording", Toast.LENGTH_LONG).show()
-                            } else {
-                                try {
-                                    cameraController.startVideoRecording { event ->
-                                        if (event is VideoRecordEvent.Finalize) {
-                                            isRecording = false
-                                            val outputUri = event.outputResults.outputUri
-                                            val filePath = outputUri.path
-                                            if (!event.hasError() && filePath != null) {
-                                                val intent = Intent(context, TransferService::class.java).apply {
-                                                    putExtra("file_path", filePath)
-                                                    putExtra("request_id", "user_push_video")
-                                                }
-                                                ContextCompat.startForegroundService(context, intent)
-                                                Toast.makeText(context, "Streaming video to PC...", Toast.LENGTH_SHORT).show()
-                                            } else {
-                                                if (event.hasError()) {
-                                                    Toast.makeText(context, "Recording error: ${event.error}", Toast.LENGTH_SHORT).show()
-                                                }
-                                                filePath?.let { java.io.File(it).delete() }
-                                            }
-                                        }
-                                    }
-                                    isRecording = true
-                                } catch (e: Exception) {
-                                    Toast.makeText(context, "Failed to start recording: ${e.message}", Toast.LENGTH_SHORT).show()
-                                }
-                            }
-                        }
-                    },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = if (isRecording) Color(0xFF2D1A1A) else Color(0x991F2128)
-                    ),
-                    shape = RoundedCornerShape(16.dp),
-                    border = BorderStroke(
-                        1.dp,
-                        if (isRecording) Color(0xFFFF8A80) else Color(0xFF2C2E35)
-                    ),
-                    contentPadding = PaddingValues(horizontal = 12.dp),
-                    modifier = Modifier
-                        .weight(1.0f)
-                        .height(58.dp)
-                ) {
-                    Icon(
-                        imageVector = VideocamIcon,
-                        contentDescription = if (isRecording) "Stop Video Recording" else "Record Video",
-                        tint = if (isRecording) Color(0xFFFF8A80) else Color.White,
-                        modifier = Modifier.size(24.dp).rotate(iconRotation)
-                    )
-                }
-
-                // Snap Photo (Center, main action, larger)
-                Button(
-                    onClick = {
-                        cameraController.takePhoto(
-                            onSuccess = { file ->
-                                val ws = app.wsClient
-                                if (ws != null) {
-                                    ws.pushPhoto(file)
-                                    if (connectionState == "Connected") {
-                                        Toast.makeText(context, "Photo copied to PC clipboard!", Toast.LENGTH_SHORT).show()
-                                    } else {
-                                        Toast.makeText(context, "Saved locally. Will upload once connected.", Toast.LENGTH_LONG).show()
-                                    }
-                                } else {
-                                    Toast.makeText(context, "Saved locally. Receiver not set up.", Toast.LENGTH_LONG).show()
-                                }
-                            },
-                            onError = { err ->
-                                Toast.makeText(context, "Photo capture failed: ${err.message}", Toast.LENGTH_SHORT).show()
-                            }
-                        )
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent),
-                    shape = RoundedCornerShape(16.dp),
-                    contentPadding = PaddingValues(0.dp),
-                    modifier = Modifier
-                        .weight(1.4f)
-                        .height(64.dp)
-                        .background(
-                            brush = Brush.linearGradient(
-                                colors = listOf(Color(0xFF3B5BFF), Color(0xFF6B82FF))
-                            ),
-                            shape = RoundedCornerShape(16.dp)
-                        )
-                ) {
-                    Icon(
-                        imageVector = CameraIcon,
-                        contentDescription = "Snap Photo",
-                        tint = Color.White,
-                        modifier = Modifier.size(28.dp).rotate(iconRotation)
-                    )
-                }
-
-                // Gallery Upload (Right)
-                Button(
-                    onClick = { galleryLauncher.launch("image/*") },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0x991F2128)),
-                    shape = RoundedCornerShape(16.dp),
-                    border = BorderStroke(1.dp, Color(0xFF2C2E35)),
-                    contentPadding = PaddingValues(horizontal = 12.dp),
-                    modifier = Modifier
-                        .weight(1.0f)
-                        .height(58.dp)
-                ) {
-                    Icon(
-                        imageVector = ImageIcon,
-                        contentDescription = "Gallery",
-                        tint = Color.White,
-                        modifier = Modifier.size(24.dp).rotate(iconRotation)
                     )
                 }
             }
@@ -1168,6 +1175,12 @@ private fun CompactSettingsChoiceTile(
     isLandscape: Boolean = false,
     onClick: () -> Unit
 ) {
+    val horizontalPadding = if (isLandscape) 4.dp else 4.dp
+    val verticalPadding = if (isLandscape) 5.dp else 7.dp
+    val dotSize = if (isLandscape) 4.dp else 4.dp
+    val spacing = if (isLandscape) 4.dp else 4.dp
+    val fontSize = if (isLandscape) 10.sp else 10.5.sp
+
     Row(
         modifier = modifier
             .clip(RoundedCornerShape(12.dp))
@@ -1177,10 +1190,7 @@ private fun CompactSettingsChoiceTile(
                 RoundedCornerShape(12.dp)
             )
             .clickable(onClick = onClick)
-            .padding(
-                horizontal = if (isLandscape) 4.dp else 8.dp,
-                vertical = if (isLandscape) 8.dp else 10.dp
-            ),
+            .padding(horizontal = horizontalPadding, vertical = verticalPadding),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Center
     ) {
@@ -1190,15 +1200,15 @@ private fun CompactSettingsChoiceTile(
         ) {
             Box(
                 modifier = Modifier
-                    .size(if (isLandscape) 4.dp else 6.dp)
+                    .size(dotSize)
                     .clip(CircleShape)
                     .background(if (active) Color(0xFFA4B4FF) else Color(0x4DFFFFFF))
             )
-            Spacer(modifier = Modifier.width(if (isLandscape) 4.dp else 6.dp))
+            Spacer(modifier = Modifier.width(spacing))
             Text(
                 text = title,
                 color = if (active) Color(0xFFDEE0FF) else Color.White.copy(alpha = 0.82f),
-                fontSize = if (isLandscape) 10.sp else 12.sp,
+                fontSize = fontSize,
                 fontWeight = FontWeight.Bold,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
@@ -1474,8 +1484,8 @@ private fun LandscapeSettingsMenu(
 ) {
     Box(
         modifier = Modifier
-            .width(580.dp)
-            .height(280.dp)
+            .width(500.dp)
+            .height(220.dp)
             .clip(RoundedCornerShape(24.dp))
             .background(
                 brush = Brush.verticalGradient(
@@ -1493,9 +1503,9 @@ private fun LandscapeSettingsMenu(
     ) {
         Row(
             modifier = Modifier.fillMaxSize(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
+            horizontalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            // Column 1: Header, Add Device, and Hint
+            // Column 1 (Left): Header info, Screen Rotation, Add Device button, Hint
             Column(
                 modifier = Modifier
                     .weight(1f)
@@ -1503,9 +1513,7 @@ private fun LandscapeSettingsMenu(
                 verticalArrangement = Arrangement.SpaceBetween
             ) {
                 // Header Info
-                Column(
-                    modifier = Modifier.fillMaxWidth()
-                ) {
+                Column(modifier = Modifier.fillMaxWidth()) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
@@ -1514,7 +1522,7 @@ private fun LandscapeSettingsMenu(
                         Text(
                             text = "Receiver Control",
                             color = Color.White,
-                            fontSize = 16.sp,
+                            fontSize = 15.sp,
                             fontWeight = FontWeight.ExtraBold,
                             maxLines = 1
                         )
@@ -1523,7 +1531,7 @@ private fun LandscapeSettingsMenu(
                             isPositive = connectionState == "Connected"
                         )
                     }
-                    Spacer(modifier = Modifier.height(2.dp))
+                    Spacer(modifier = Modifier.height(1.dp))
                     Text(
                         text = selectedDevice?.let { it.alias.ifBlank { it.name } } ?: "No PC selected",
                         color = Color(0xA6FFFFFF),
@@ -1533,20 +1541,48 @@ private fun LandscapeSettingsMenu(
                     )
                 }
 
-                // Add Device Button
+                // Screen Rotation Section (Row of 3 choices)
+                SettingsSectionCard(
+                    title = "Screen rotation",
+                    isLandscape = true,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        RotationLockMode.values().forEach { mode ->
+                            CompactSettingsChoiceTile(
+                                title = when (mode) {
+                                    RotationLockMode.AUTO -> "Auto"
+                                    RotationLockMode.PORTRAIT -> "Portrait"
+                                    RotationLockMode.LANDSCAPE -> "Landscape"
+                                },
+                                active = rotationLockMode == mode,
+                                isLandscape = true,
+                                modifier = Modifier.weight(1f),
+                                onClick = { onRotationLockChange(mode) }
+                            )
+                        }
+                    }
+                }
+
+                // Add Device Button (Sleeker and more compact)
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(14.dp))
+                        .clip(RoundedCornerShape(12.dp))
                         .background(Color(0x18FFFFFF))
-                        .border(BorderStroke(1.dp, Color(0x18FFFFFF)), RoundedCornerShape(14.dp))
+                        .border(BorderStroke(1.dp, Color(0x18FFFFFF)), RoundedCornerShape(12.dp))
                         .clickable { onNavigateToPairing() }
-                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(24.dp)
+                            .size(20.dp)
                             .clip(CircleShape)
                             .background(Color(0x12FFFFFF)),
                         contentAlignment = Alignment.Center
@@ -1555,25 +1591,16 @@ private fun LandscapeSettingsMenu(
                             imageVector = Icons.Default.Add,
                             contentDescription = "Add",
                             tint = Color.White,
-                            modifier = Modifier.size(14.dp)
+                            modifier = Modifier.size(12.dp)
                         )
                     }
                     Spacer(modifier = Modifier.width(8.dp))
-                    Column {
-                        Text(
-                            text = "Add & Pair a New PC",
-                            color = Color.White,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            text = "Pair another receiver",
-                            color = Color(0x8CFFFFFF),
-                            fontSize = 9.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
+                    Text(
+                        text = "Add & Pair a New PC",
+                        color = Color.White,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
                 }
 
                 // Hint
@@ -1597,24 +1624,24 @@ private fun LandscapeSettingsMenu(
                 }
             }
 
-            // Column 2: Camera Capture and Connection Route
+            // Column 2 (Right): Camera Capture and Connection Route
             Column(
                 modifier = Modifier
-                    .weight(1.1f)
+                    .weight(1f)
                     .fillMaxHeight(),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                verticalArrangement = Arrangement.SpaceBetween
             ) {
                 // 1. Camera Capture
                 SettingsSectionCard(
                     title = "Camera capture",
                     isLandscape = true,
-                    modifier = Modifier.weight(1f).fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth()
                 ) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(top = 4.dp),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
                         CameraCapturePolicy.values().forEach { policy ->
                             CompactSettingsChoiceTile(
@@ -1632,7 +1659,7 @@ private fun LandscapeSettingsMenu(
                 SettingsSectionCard(
                     title = "Connection route",
                     isLandscape = true,
-                    modifier = Modifier.weight(1f).fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth()
                 ) {
                     Row(
                         modifier = Modifier
@@ -1651,40 +1678,6 @@ private fun LandscapeSettingsMenu(
                                 isLandscape = true,
                                 modifier = Modifier.weight(1f),
                                 onClick = { onConnectionModeChange(mode) }
-                            )
-                        }
-                    }
-                }
-            }
-
-            // Column 3: Screen Rotation
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxHeight()
-            ) {
-                SettingsSectionCard(
-                    title = "Screen rotation",
-                    isLandscape = true,
-                    modifier = Modifier.fillMaxSize()
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 6.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        RotationLockMode.values().forEach { mode ->
-                            CompactSettingsChoiceTile(
-                                title = when (mode) {
-                                    RotationLockMode.AUTO -> "Auto"
-                                    RotationLockMode.PORTRAIT -> "Portrait"
-                                    RotationLockMode.LANDSCAPE -> "Landscape"
-                                },
-                                active = rotationLockMode == mode,
-                                isLandscape = true,
-                                modifier = Modifier.fillMaxWidth(),
-                                onClick = { onRotationLockChange(mode) }
                             )
                         }
                     }
