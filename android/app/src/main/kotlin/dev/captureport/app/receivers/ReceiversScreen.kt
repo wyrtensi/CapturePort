@@ -28,9 +28,13 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.path
+import android.view.OrientationEventListener
+import android.view.Surface
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.listSaver
@@ -89,6 +93,121 @@ fun ReceiversScreen(
     var showSettingsMenu by rememberSaveable { mutableStateOf(false) }
     var currentPolicy by remember { mutableStateOf(app.cameraCapturePolicy) }
     var receiverConnectionMode by remember { mutableStateOf(app.receiverConnectionMode) }
+
+    var isRotationLocked by rememberSaveable { mutableStateOf(false) }
+    var physicalRotation by remember { mutableStateOf(0) }
+    val currentRotation = if (isRotationLocked) 0 else physicalRotation
+
+    val iconRotation by animateFloatAsState(
+        targetValue = currentRotation.toFloat(),
+        animationSpec = tween(durationMillis = 300)
+    )
+
+    DisposableEffect(context) {
+        val listener = object : OrientationEventListener(context) {
+            override fun onOrientationChanged(orientation: Int) {
+                if (orientation == ORIENTATION_UNKNOWN) return
+                val newRotation = when (orientation) {
+                    in 45 until 135 -> 270
+                    in 135 until 225 -> 180
+                    in 225 until 315 -> 90
+                    else -> 0
+                }
+                if (physicalRotation != newRotation) {
+                    physicalRotation = newRotation
+                }
+            }
+        }
+        if (listener.canDetectOrientation()) {
+            listener.enable()
+        }
+        onDispose {
+            listener.disable()
+        }
+    }
+
+    LaunchedEffect(currentRotation) {
+        val targetRotationValue = when (currentRotation) {
+            90 -> Surface.ROTATION_270
+            180 -> Surface.ROTATION_180
+            270 -> Surface.ROTATION_90
+            else -> Surface.ROTATION_0
+        }
+        try {
+            val superclass = cameraController.cameraController::class.java.superclass
+            
+            // 1. mImageCapture
+            try {
+                val field = superclass.getDeclaredField("mImageCapture")
+                field.isAccessible = true
+                val imageCapture = field.get(cameraController.cameraController)
+                if (imageCapture != null) {
+                    var clazz: Class<*>? = imageCapture.javaClass
+                    var methodFound = false
+                    while (clazz != null && !methodFound) {
+                        try {
+                            val method = clazz.getDeclaredMethod("setTargetRotation", java.lang.Integer.TYPE)
+                            method.isAccessible = true
+                            method.invoke(imageCapture, targetRotationValue)
+                            methodFound = true
+                        } catch (ex: Exception) {
+                            clazz = clazz.superclass
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+            
+            // 2. mImageAnalysis
+            try {
+                val field = superclass.getDeclaredField("mImageAnalysis")
+                field.isAccessible = true
+                val imageAnalysis = field.get(cameraController.cameraController)
+                if (imageAnalysis != null) {
+                    var clazz: Class<*>? = imageAnalysis.javaClass
+                    var methodFound = false
+                    while (clazz != null && !methodFound) {
+                        try {
+                            val method = clazz.getDeclaredMethod("setTargetRotation", java.lang.Integer.TYPE)
+                            method.isAccessible = true
+                            method.invoke(imageAnalysis, targetRotationValue)
+                            methodFound = true
+                        } catch (ex: Exception) {
+                            clazz = clazz.superclass
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+
+            // 3. mVideoCapture
+            try {
+                val field = superclass.getDeclaredField("mVideoCapture")
+                field.isAccessible = true
+                val videoCapture = field.get(cameraController.cameraController)
+                if (videoCapture != null) {
+                    var clazz: Class<*>? = videoCapture.javaClass
+                    var methodFound = false
+                    while (clazz != null && !methodFound) {
+                        try {
+                            val method = clazz.getDeclaredMethod("setTargetRotation", java.lang.Integer.TYPE)
+                            method.isAccessible = true
+                            method.invoke(videoCapture, targetRotationValue)
+                            methodFound = true
+                        } catch (ex: Exception) {
+                            clazz = clazz.superclass
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
     
     var deviceToDeleteId by rememberSaveable { mutableStateOf<String?>(null) }
     val deviceToDelete = pairedDevices.find { it.id == deviceToDeleteId }
@@ -286,7 +405,11 @@ fun ReceiversScreen(
                         .padding(top = 48.dp, bottom = 14.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column(modifier = Modifier.weight(1f)) {
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .rotate(iconRotation)
+                    ) {
                         Text(
                             text = "Receiver Control",
                             color = Color.White,
@@ -304,12 +427,14 @@ fun ReceiversScreen(
                     }
                     SettingsStatusPill(
                         text = connectionState,
-                        isPositive = connectionState == "Connected"
+                        isPositive = connectionState == "Connected",
+                        modifier = Modifier.rotate(iconRotation)
                     )
                 }
 
                 SettingsSectionCard(
-                    title = "Camera capture"
+                    title = "Camera capture",
+                    iconRotation = iconRotation
                 ) {
                     Row(
                         modifier = Modifier
@@ -322,6 +447,7 @@ fun ReceiversScreen(
                                 title = policy.label.removePrefix("Camera: ").replaceFirstChar { it.uppercase() },
                                 active = currentPolicy == policy,
                                 modifier = Modifier.weight(1f),
+                                iconRotation = iconRotation,
                                 onClick = { applyCameraMode(policy) }
                             )
                         }
@@ -332,7 +458,8 @@ fun ReceiversScreen(
 
                 // Keep for test compatibility: "Local only", "Through internet"
                 SettingsSectionCard(
-                    title = "Connection route"
+                    title = "Connection route",
+                    iconRotation = iconRotation
                 ) {
                     Row(
                         modifier = Modifier
@@ -349,6 +476,7 @@ fun ReceiversScreen(
                                 },
                                 active = receiverConnectionMode == mode,
                                 modifier = Modifier.weight(1f),
+                                iconRotation = iconRotation,
                                 onClick = { applyConnectionMode(mode) }
                             )
                         }
@@ -374,7 +502,8 @@ fun ReceiversScreen(
                         modifier = Modifier
                             .size(34.dp)
                             .clip(CircleShape)
-                            .background(Color(0x12FFFFFF)),
+                            .background(Color(0x12FFFFFF))
+                            .rotate(iconRotation),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
@@ -385,7 +514,11 @@ fun ReceiversScreen(
                         )
                     }
                     Spacer(modifier = Modifier.width(12.dp))
-                    Column(modifier = Modifier.weight(1f)) {
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .rotate(iconRotation)
+                    ) {
                         Text(
                             text = "Add & Pair a New PC",
                             color = Color.White,
@@ -404,7 +537,64 @@ fun ReceiversScreen(
                         imageVector = Icons.Default.KeyboardArrowDown,
                         contentDescription = null,
                         tint = Color.White.copy(alpha = 0.55f),
-                        modifier = Modifier.size(18.dp)
+                        modifier = Modifier.size(18.dp).rotate(iconRotation)
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(18.dp))
+                        .background(Color(0x991F2128))
+                        .border(BorderStroke(1.dp, Color(0xFF2C2E35)), RoundedCornerShape(18.dp))
+                        .clickable {
+                            isRotationLocked = !isRotationLocked
+                        }
+                        .padding(horizontal = 16.dp, vertical = 11.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(34.dp)
+                            .clip(CircleShape)
+                            .background(Color(0x12FFFFFF))
+                            .rotate(iconRotation),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = if (isRotationLocked) Icons.Default.Lock else LockOpenIcon,
+                            contentDescription = "Rotation Lock",
+                            tint = Color.White,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .rotate(iconRotation)
+                    ) {
+                        Text(
+                            text = "Rotation Lock",
+                            color = Color.White,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = if (isRotationLocked) "Locked to portrait" else "Auto-rotate with device",
+                            color = Color(0x8CFFFFFF),
+                            fontSize = 11.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    Icon(
+                        imageVector = if (isRotationLocked) Icons.Default.Lock else LockOpenIcon,
+                        contentDescription = null,
+                        tint = Color.White.copy(alpha = 0.55f),
+                        modifier = Modifier.size(18.dp).rotate(iconRotation)
                     )
                 }
 
@@ -418,7 +608,7 @@ fun ReceiversScreen(
                         text = "Tap outside or press Back to close",
                         color = Color(0x73FFFFFF),
                         fontSize = 10.sp,
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier.weight(1f).rotate(iconRotation)
                     )
                     Box(
                         modifier = Modifier
@@ -437,6 +627,30 @@ fun ReceiversScreen(
                 .statusBarsPadding()
                 .padding(horizontal = 16.dp, vertical = 12.dp)
         ) {
+            AnimatedVisibility(
+                visible = !showSettingsMenu,
+                modifier = Modifier.align(Alignment.CenterStart),
+                enter = fadeIn(animationSpec = tween(180)),
+                exit = fadeOut(animationSpec = tween(120))
+            ) {
+                IconButton(
+                    onClick = { cameraController.toggleCamera() },
+                    modifier = Modifier
+                        .size(40.dp)
+                        .background(Color(0x80101114), CircleShape)
+                        .border(1.dp, Color(0x1AFFFFFF), CircleShape)
+                ) {
+                    Icon(
+                        imageVector = CameraswitchIcon,
+                        contentDescription = "Switch camera",
+                        tint = Color.White,
+                        modifier = Modifier
+                            .size(20.dp)
+                            .rotate(iconRotation)
+                    )
+                }
+            }
+
             if (isRecording) {
                 val infiniteTransition = rememberInfiniteTransition()
                 val dotAlpha by infiniteTransition.animateFloat(
@@ -445,8 +659,9 @@ fun ReceiversScreen(
                 )
                 Row(
                     modifier = Modifier
-                        .align(Alignment.CenterStart)
+                        .align(Alignment.CenterEnd)
                         .height(30.dp)
+                        .rotate(iconRotation)
                         .background(Color(0x99FF3B30), RoundedCornerShape(999.dp))
                         .padding(horizontal = 10.dp),
                     verticalAlignment = Alignment.CenterVertically
@@ -466,35 +681,16 @@ fun ReceiversScreen(
                 enter = fadeIn(animationSpec = tween(180)),
                 exit = fadeOut(animationSpec = tween(120))
             ) {
-                Row(
-                    modifier = Modifier
-                        .height(30.dp)
-                        .clip(RoundedCornerShape(999.dp))
-                        .background(Color(0x4A101114))
-                        .border(BorderStroke(1.dp, Color(0x18FFFFFF)), RoundedCornerShape(999.dp))
-                        .clickable { showSettingsMenu = true }
-                        .padding(start = 12.dp, end = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                IconButton(
+                    onClick = { showSettingsMenu = true },
+                    colors = IconButtonDefaults.iconButtonColors(containerColor = Color.Transparent),
+                    modifier = Modifier.size(36.dp)
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .size(6.dp)
-                            .clip(CircleShape)
-                            .background(if (connectionState == "Connected") Color(0xFF4CAF50) else Color(0xFFFFC107))
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = receiverConnectionMode.label,
-                        color = Color.White.copy(alpha = 0.72f),
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1
-                    )
                     Icon(
                         imageVector = Icons.Default.KeyboardArrowDown,
                         contentDescription = "Receiver settings",
-                        tint = Color.White.copy(alpha = 0.45f),
-                        modifier = Modifier.size(16.dp)
+                        tint = Color.White.copy(alpha = 0.5f),
+                        modifier = Modifier.size(24.dp)
                     )
                 }
             }
@@ -594,9 +790,15 @@ fun ReceiversScreen(
                         val isCollapsed = collapsedDevices[device.id] ?: true
                         val displayName = device.alias.ifBlank { device.name }
 
+                        val cardWidthModifier = if (pairedDevices.size == 1) {
+                            Modifier.fillParentMaxWidth()
+                        } else {
+                            Modifier.fillParentMaxWidth(0.8f).widthIn(max = 280.dp)
+                        }
+
                         Row(
                             modifier = Modifier
-                                .width(if (isCollapsed) 188.dp else 252.dp)
+                                .then(cardWidthModifier)
                                 .clip(RoundedCornerShape(16.dp))
                                 .background(bgCol)
                                 .border(BorderStroke(1.dp, borderCol), RoundedCornerShape(16.dp))
@@ -769,24 +971,12 @@ fun ReceiversScreen(
                         .weight(1.0f)
                         .height(58.dp)
                 ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center
-                    ) {
-                        Icon(
-                            imageVector = VideocamIcon,
-                            contentDescription = "Video",
-                            tint = if (isRecording) Color(0xFFFF8A80) else Color.White,
-                            modifier = Modifier.size(20.dp)
-                        )
-                        Spacer(modifier = Modifier.height(2.dp))
-                        Text(
-                            text = if (isRecording) "Stop Rec" else "Record",
-                            color = if (isRecording) Color(0xFFFF8A80) else Color.White,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 11.sp
-                        )
-                    }
+                    Icon(
+                        imageVector = VideocamIcon,
+                        contentDescription = if (isRecording) "Stop Video Recording" else "Record Video",
+                        tint = if (isRecording) Color(0xFFFF8A80) else Color.White,
+                        modifier = Modifier.size(24.dp).rotate(iconRotation)
+                    )
                 }
 
                 // Snap Photo (Center, main action, larger)
@@ -820,25 +1010,12 @@ fun ReceiversScreen(
                             shape = RoundedCornerShape(16.dp)
                         )
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.Center,
-                        modifier = Modifier.fillMaxSize()
-                    ) {
-                        Icon(
-                            imageVector = CameraIcon,
-                            contentDescription = "Camera",
-                            tint = Color.White,
-                            modifier = Modifier.size(22.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = "Snap Photo",
-                            color = Color.White,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 14.sp
-                        )
-                    }
+                    Icon(
+                        imageVector = CameraIcon,
+                        contentDescription = "Snap Photo",
+                        tint = Color.White,
+                        modifier = Modifier.size(28.dp).rotate(iconRotation)
+                    )
                 }
 
                 // Gallery Upload (Right)
@@ -852,24 +1029,12 @@ fun ReceiversScreen(
                         .weight(1.0f)
                         .height(58.dp)
                 ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center
-                    ) {
-                        Icon(
-                            imageVector = ImageIcon,
-                            contentDescription = "Gallery",
-                            tint = Color.White,
-                            modifier = Modifier.size(20.dp)
-                        )
-                        Spacer(modifier = Modifier.height(2.dp))
-                        Text(
-                            text = "Gallery",
-                            color = Color.White,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 11.sp
-                        )
-                    }
+                    Icon(
+                        imageVector = ImageIcon,
+                        contentDescription = "Gallery",
+                        tint = Color.White,
+                        modifier = Modifier.size(24.dp).rotate(iconRotation)
+                    )
                 }
             }
         }
@@ -1117,11 +1282,12 @@ private fun copyUriToCache(context: Context, uri: Uri): File? {
 @Composable
 private fun SettingsStatusPill(
     text: String,
-    isPositive: Boolean
+    isPositive: Boolean,
+    modifier: Modifier = Modifier
 ) {
     val dotColor = if (isPositive) Color(0xFF4CAF50) else Color(0xFFFFC107)
     Row(
-        modifier = Modifier
+        modifier = modifier
             .clip(RoundedCornerShape(999.dp))
             .background(Color(0x241F2128))
             .border(BorderStroke(1.dp, Color(0x18FFFFFF)), RoundedCornerShape(999.dp))
@@ -1149,6 +1315,7 @@ private fun SettingsStatusPill(
 private fun SettingsSectionCard(
     title: String,
     caption: String = "",
+    iconRotation: Float = 0f,
     content: @Composable ColumnScope.() -> Unit
 ) {
     Column(
@@ -1163,7 +1330,8 @@ private fun SettingsSectionCard(
             text = title,
             color = Color.White,
             fontSize = 13.sp,
-            fontWeight = FontWeight.ExtraBold
+            fontWeight = FontWeight.ExtraBold,
+            modifier = Modifier.rotate(iconRotation)
         )
         if (caption.isNotEmpty()) {
             Text(
@@ -1171,7 +1339,7 @@ private fun SettingsSectionCard(
                 color = Color(0x8CFFFFFF),
                 fontSize = 11.sp,
                 lineHeight = 15.sp,
-                modifier = Modifier.padding(top = 2.dp)
+                modifier = Modifier.padding(top = 2.dp).rotate(iconRotation)
             )
         }
         content()
@@ -1183,6 +1351,7 @@ private fun CompactSettingsChoiceTile(
     title: String,
     active: Boolean,
     modifier: Modifier = Modifier,
+    iconRotation: Float = 0f,
     onClick: () -> Unit
 ) {
     Row(
@@ -1198,21 +1367,27 @@ private fun CompactSettingsChoiceTile(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Center
     ) {
-        Box(
-            modifier = Modifier
-                .size(6.dp)
-                .clip(CircleShape)
-                .background(if (active) Color(0xFFA4B4FF) else Color(0x4DFFFFFF))
-        )
-        Spacer(modifier = Modifier.width(6.dp))
-        Text(
-            text = title,
-            color = if (active) Color(0xFFDEE0FF) else Color.White.copy(alpha = 0.82f),
-            fontSize = 12.sp,
-            fontWeight = FontWeight.Bold,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
+        Row(
+            modifier = Modifier.rotate(iconRotation),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(6.dp)
+                    .clip(CircleShape)
+                    .background(if (active) Color(0xFFA4B4FF) else Color(0x4DFFFFFF))
+            )
+            Spacer(modifier = Modifier.width(6.dp))
+            Text(
+                text = title,
+                color = if (active) Color(0xFFDEE0FF) else Color.White.copy(alpha = 0.82f),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
     }
 }
 
@@ -1421,3 +1596,86 @@ val ImageIcon: ImageVector
             close()
         }
     }.build()
+
+val CameraswitchIcon: ImageVector
+    get() = ImageVector.Builder(
+        name = "CameraswitchIcon",
+        defaultWidth = 24.dp,
+        defaultHeight = 24.dp,
+        viewportWidth = 24f,
+        viewportHeight = 24f
+    ).apply {
+        path(fill = SolidColor(Color.White)) {
+            moveTo(16f, 7f)
+            horizontalLineTo(8f)
+            verticalLineTo(14f)
+            horizontalLineTo(6f)
+            verticalLineTo(7f)
+            curveTo(6f, 5.9f, 6.9f, 5f, 8f, 5f)
+            horizontalLineTo(16f)
+            lineTo(13.5f, 2.5f)
+            lineTo(14.92f, 1.08f)
+            lineTo(19.84f, 6f)
+            lineTo(14.92f, 10.92f)
+            lineTo(13.5f, 9.5f)
+            lineTo(16f, 7f)
+            close()
+            moveTo(8f, 17f)
+            horizontalLineTo(16f)
+            verticalLineTo(10f)
+            horizontalLineTo(18f)
+            verticalLineTo(17f)
+            curveTo(18f, 18.1f, 17.1f, 19f, 16f, 19f)
+            horizontalLineTo(8f)
+            lineTo(10.5f, 21.5f)
+            lineTo(9.08f, 22.92f)
+            lineTo(4.16f, 18f)
+            lineTo(9.08f, 13.08f)
+            lineTo(10.5f, 14.5f)
+            lineTo(8f, 17f)
+            close()
+        }
+    }.build()
+
+val LockOpenIcon: ImageVector
+    get() = ImageVector.Builder(
+        name = "LockOpenIcon",
+        defaultWidth = 24.dp,
+        defaultHeight = 24.dp,
+        viewportWidth = 24f,
+        viewportHeight = 24f
+    ).apply {
+        path(fill = SolidColor(Color.White)) {
+            moveTo(12f, 17f)
+            curveTo(13.1f, 17f, 14f, 16.1f, 14f, 15f)
+            reflectiveCurveTo(13.1f, 13f, 12f, 13f)
+            reflectiveCurveTo(10f, 13.9f, 10f, 15f)
+            reflectiveCurveTo(10.9f, 17f, 12f, 17f)
+            close()
+            moveTo(18f, 8f)
+            horizontalLineTo(17f)
+            verticalLineTo(6f)
+            curveTo(17f, 3.24f, 14.76f, 1f, 12f, 1f)
+            reflectiveCurveTo(7f, 3.24f, 7f, 6f)
+            horizontalLineTo(9f)
+            curveTo(9f, 4.34f, 10.34f, 3f, 12f, 3f)
+            reflectiveCurveTo(15f, 4.34f, 15f, 6f)
+            verticalLineTo(8f)
+            horizontalLineTo(6f)
+            curveTo(4.9f, 8f, 4f, 8.9f, 4f, 10f)
+            verticalLineTo(20f)
+            curveTo(4f, 21.1f, 4.9f, 22f, 6f, 22f)
+            horizontalLineTo(18f)
+            curveTo(19.1f, 22f, 20f, 21.1f, 20f, 20f)
+            verticalLineTo(10f)
+            curveTo(20f, 8.9f, 19.1f, 8f, 18f, 8f)
+            close()
+            moveTo(18f, 20f)
+            horizontalLineTo(6f)
+            verticalLineTo(10f)
+            horizontalLineTo(18f)
+            verticalLineTo(20f)
+            close()
+        }
+    }.build()
+

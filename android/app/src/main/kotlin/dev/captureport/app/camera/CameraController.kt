@@ -2,6 +2,7 @@ package dev.captureport.app.camera
 
 import android.content.Context
 import androidx.annotation.OptIn
+import androidx.camera.core.CameraSelector
 import androidx.camera.core.ExperimentalGetImage
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageCapture
@@ -184,6 +185,15 @@ class CameraController(
         qrScanningActive.set(false)
         scanInFlight.set(false)
         cameraController.clearImageAnalysisAnalyzer()
+    }
+
+    fun toggleCamera() {
+        val currentSelector = cameraController.cameraSelector
+        if (currentSelector == CameraSelector.DEFAULT_BACK_CAMERA) {
+            cameraController.cameraSelector = CameraSelector.DEFAULT_FRONT_CAMERA
+        } else {
+            cameraController.cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
+        }
     }
 
     fun release() {
