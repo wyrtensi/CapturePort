@@ -38,7 +38,7 @@ impl ClipboardSink for MacosSink {
         let abs_path = std::fs::canonicalize(path)?;
         let path_str = abs_path.to_string_lossy().to_string();
 
-        objc2::rc::autoreleasepool(|_| unsafe {
+        objc2::rc::autoreleasepool(|_| {
             let pboard = NSPasteboard::generalPasteboard();
             pboard.clearContents();
             let ns_path = NSString::from_str(&path_str);

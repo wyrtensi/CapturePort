@@ -53,6 +53,18 @@ class ReceiversScreenLayoutContractTest {
         assertFalse(receiverSource.contains("contentDescription = \"Pair Receiver\""))
     }
 
+    @Test
+    fun receiverSettingsMenuShowsBackgroundReadinessChecks() {
+        val receiverSource = readSource("receivers/ReceiversScreen.kt")
+
+        assertTrue(receiverSource.contains("Background mode readiness"))
+        assertTrue(receiverSource.contains("Camera permission"))
+        assertTrue(receiverSource.contains("Microphone permission"))
+        assertTrue(receiverSource.contains("Battery unrestricted"))
+        assertTrue(receiverSource.contains("Xiaomi autostart"))
+        assertTrue(receiverSource.contains("ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"))
+    }
+
     private fun readSource(relativePath: String): String {
         val packagePath = "src/main/kotlin/dev/captureport/app/$relativePath"
         val candidates = listOf(

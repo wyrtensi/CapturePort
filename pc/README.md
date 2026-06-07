@@ -13,7 +13,7 @@ CapturePort's PC Receiver is a cross-platform desktop application designed to re
 ## Features
 - **Tray-based UI**: Minimize-to-tray application built with Svelte 5 and Tauri v2.
 - **Mutual Cryptographic Pairing**: Secure pairing using Ed25519 signatures and QR code scanning.
-- **Model Context Protocol (MCP)**: Native integration for tools (`list_devices`, `capture_photo`, `capture_screenshot`, `record_video`, `get_device_clipboard`, `set_device_clipboard`, `snap_frame`) over Stdio or Server-Sent Events (SSE).
+- **Model Context Protocol (MCP)**: Native integration for tools (`list_devices`, `look_camera`, `watch_camera`, `list_media`, `get_media`, `compare_media`, `camera_status`, `capture_photo`, `record_video`, clipboard tools, and presets) over stdio or Streamable HTTP.
 - **Auto Clipboard Sync**: Photos are directly copied to the system clipboard as images. Videos are saved to disk and copied as file URIs.
 - **Firewall Integration**: Settings-driven utility to configure OS-level firewall rules.
 
@@ -74,14 +74,15 @@ npm run tauri build
 The compiled binary (`captureport`) can run in two modes:
 
 1. **Desktop Tray GUI (Default)**:
-   Launches the system tray icon, spawns the local Axum WebSocket listener on port `7878`, and starts the mDNS and UDP advertisers.
+   Launches the system tray icon, spawns the Axum WebSocket listener on port `7878`, starts the Streamable HTTP MCP endpoint on port `7879`, and advertises both over mDNS/UDP.
    ```bash
    captureport
    ```
 
 2. **Headless Stdio MCP (CLI)**:
-   Runs headless directly in the terminal, listening for standard JSON-RPC input over stdin/stdout (used by Claude Desktop).
+   Runs headless directly in the terminal, listening for standard JSON-RPC input over stdin/stdout. The standalone `captureport-mcp` binary is preferred for IDEs when available; `captureport --mcp-stdio` is the fallback.
    ```bash
+   captureport-mcp
    captureport --mcp-stdio
    ```
 
@@ -91,6 +92,12 @@ The compiled binary (`captureport`) can run in two modes:
 
 - **Settings Path**: Saved in JSON format at `~/AppData/Roaming/CapturePort/settings.json` (Windows), `~/Library/Application Support/CapturePort/settings.json` (macOS), or `~/.config/CapturePort/settings.json` (Linux).
 - **Default Media Path**: Received photos and videos are stored in `~/Pictures/CapturePort`.
+- **MCP Media Index**: Existing files in `~/Pictures/CapturePort` are indexed on startup and exposed through `list_media`, `get_media`, `resources/list`, `resources/read`, `captureport://media/{id}`, `captureport://media/{id}/thumbnail`, and `camera://latest`.
 - **Default Network Ports**:
-  - WebSocket Receiver/MCP Server: `7878` (customizable in Settings).
+  - WebSocket Receiver: `7878` (customizable in Settings).
+  - MCP Streamable HTTP: `7879` at `/mcp` (customizable in Settings).
   - Svelte/Vite Dev Server: `1420` (strictPort enabled in `vite.config.js`).
+- **MCP Access Presets**: `privacy_first` and `local_agent` keep the MCP HTTP endpoint on loopback; `lan_agent` is the discoverable default; `vision_heavy` also enables the stream-mode flag for clients that support it.
+- **MCP HTTP Checks**: Streamable HTTP uses allowed Host/Origin lists derived from local pairing hosts by default. Override them with `mcpAllowedHosts` and `mcpAllowedOrigins` in settings when a client needs a custom hostname.
+- **MCP HTTP Auth**: Set `mcpHttpAuthToken` to require `Authorization: Bearer <token>` for Streamable HTTP clients. mDNS advertises `auth=bearer` without revealing the token, and the stdio proxy automatically adds the local bearer header.
+- **MCP Device Targeting**: `list_devices` returns `target_device_id`; pass it to live camera, video, and clipboard tools to select a specific phone when several phones are online.

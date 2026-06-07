@@ -70,6 +70,9 @@ class CapturePortService : LifecycleService() {
         when (action) {
             ACTION_START, ACTION_UPDATE_STATE -> {
                 promoteToForeground()
+                val app = CapturePortApp.instance
+                app.ensureWsClient()
+                app.ensureSelectedDeviceConnection(startService = false)
                 startTrackingConnectionState()
                 updateCameraLifecycleBinding()
             }
@@ -77,6 +80,8 @@ class CapturePortService : LifecycleService() {
                 stopTrackingConnectionState()
                 stopObservingAppState()
                 val app = CapturePortApp.instance
+                app.isBackgroundCameraArmed = false
+                app.isBackgroundMicrophoneArmed = false
                 app.cameraController.unbind()
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
@@ -89,14 +94,20 @@ class CapturePortService : LifecycleService() {
     private fun promoteToForeground() {
         val app = CapturePortApp.instance
         val isBgCamera = app.cameraCapturePolicy == CameraCapturePolicy.Background
+        val canUseCameraType = isBgCamera && (app.isActivityVisible || isCameraForegroundActive())
         
         // Choose foreground type: camera + dataSync if background camera is allowed
-        // To comply with Android 14+ foreground service rules, we promote to Camera type while in the foreground.
-        val foregroundType = if (isBgCamera) {
+        // Android 14+ only lets us create a camera FGS while the app is visible.
+        val foregroundType = if (canUseCameraType) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA or 
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE or 
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+                val microphoneType = if (app.hasAudioCapturePermission()) {
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+                } else {
+                    0
+                }
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA or
+                    microphoneType or
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
             } else {
                 0
             }
@@ -133,6 +144,16 @@ class CapturePortService : LifecycleService() {
         }
     }
 
+    private fun isCameraForegroundActive(): Boolean {
+        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+            (currentForegroundType and ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA) != 0
+    }
+
+    private fun isMicrophoneForegroundActive(): Boolean {
+        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+            (currentForegroundType and ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE) != 0
+    }
+
     private fun startTrackingConnectionState() {
         if (connectionStateJob != null) return
         
@@ -158,13 +179,23 @@ class CapturePortService : LifecycleService() {
         val isActivityVisible = app.isActivityVisible
 
         lifecycleScope.launch {
-            if (isBgCamera && !isActivityVisible) {
+            if (isBgCamera && !isActivityVisible && isCameraForegroundActive()) {
                 Log.i("CapturePortService", "Binding camera to background service lifecycle")
-                app.cameraController.bindToLifecycle(this@CapturePortService)
+                try {
+                    app.cameraController.bindToLifecycle(this@CapturePortService)
+                    app.isBackgroundCameraArmed = true
+                    app.isBackgroundMicrophoneArmed = isMicrophoneForegroundActive()
+                } catch (e: Exception) {
+                    app.isBackgroundCameraArmed = false
+                    app.isBackgroundMicrophoneArmed = false
+                    Log.e("CapturePortService", "Failed to bind camera to background service: ${e.message}")
+                }
             } else {
                 Log.i("CapturePortService", "Unbinding camera from background service lifecycle (Activity visible or ScreenOnly mode)")
                 // Only unbind if it's currently bound to this service
                 app.cameraController.unbind(this@CapturePortService)
+                app.isBackgroundCameraArmed = false
+                app.isBackgroundMicrophoneArmed = false
             }
         }
     }
@@ -181,7 +212,11 @@ class CapturePortService : LifecycleService() {
         }
 
         val subText = if (isBgCamera && !isActivityVisible) {
-            "Background camera capture mode active"
+            if (isCameraForegroundActive()) {
+                "Background camera capture mode active"
+            } else {
+                "Open CapturePort once to arm background camera mode"
+            }
         } else {
             "Smart background connection active"
         }
@@ -230,5 +265,8 @@ class CapturePortService : LifecycleService() {
         super.onDestroy()
         stopTrackingConnectionState()
         stopObservingAppState()
+        val app = CapturePortApp.instance
+        app.isBackgroundCameraArmed = false
+        app.isBackgroundMicrophoneArmed = false
     }
 }

@@ -29,10 +29,11 @@ class ReceiversViewModel(
 
     fun removeDevice(device: PairedDevice) {
         viewModelScope.launch {
-            repository.removeDevice(device.id)
             val app = CapturePortApp.instance
-            if (selectedDevice.value?.id == device.id) {
-                app.wsClient?.disconnect()
+            val wasSelected = selectedDevice.value?.id == device.id
+            repository.removeDevice(device.id)
+            if (wasSelected) {
+                app.disconnectFromReceiver()
             }
         }
     }

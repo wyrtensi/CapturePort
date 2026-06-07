@@ -46,6 +46,22 @@ pub struct MediaItem {
     pub device_id: String,
     #[serde(default)]
     pub device_name: String,
+    #[serde(default)]
+    pub label: String,
+    #[serde(default)]
+    pub uri: String,
+    #[serde(default)]
+    pub mime_type: String,
+    #[serde(default)]
+    pub source_request_id: Option<String>,
+    #[serde(default)]
+    pub thumbnail_uri: String,
+    #[serde(default)]
+    pub thumbnail_path: String,
+    #[serde(default)]
+    pub notes: String,
+    #[serde(default)]
+    pub capture_origin: String,
 }
 
 // Active websocket transmission session
@@ -95,6 +111,11 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(pubkey: [u8; 32], privkey: [u8; 32], close_to_tray: bool) -> Self {
+        let media_history = if crate::AppSettings::load().mcp_media_index_enabled() {
+            crate::media::hydrate_media_index().items
+        } else {
+            Vec::new()
+        };
         let state = Self {
             inner: Arc::new(Mutex::new(AppStateInner {
                 pc_public_key: pubkey,
@@ -102,7 +123,7 @@ impl AppState {
                 active_sessions: HashMap::new(),
                 paired_devices: HashMap::new(),
                 pending_requests: HashMap::new(),
-                media_history: Vec::new(),
+                media_history,
                 active_pairing_nonce: None,
                 mdns_advertiser: None,
             })),
@@ -156,7 +177,7 @@ impl AppState {
         channel: String,
     ) {
         let mut inner = self.inner.lock().unwrap();
-        inner.active_sessions.insert(
+        let previous = inner.active_sessions.insert(
             device_id.clone(),
             WsSession {
                 session_id,
@@ -167,6 +188,11 @@ impl AppState {
                 channel,
             },
         );
+        if let Some(previous) = previous {
+            let _ = previous
+                .tx
+                .try_send(axum::extract::ws::Message::Close(None));
+        }
     }
 
     // Unregister active device session only if the session ID matches
@@ -245,5 +271,80 @@ pub mod dirs {
                 h.join(".config")
             }
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn register_session_replaces_and_closes_previous_session_for_same_device() {
+        let state = AppState::new([0; 32], [0; 32], true);
+        let (old_tx, mut old_rx) = tokio::sync::mpsc::channel(1);
+        let (new_tx, _new_rx) = tokio::sync::mpsc::channel(1);
+
+        state.register_session(
+            "old-session".to_string(),
+            "phone-1".to_string(),
+            "Phone".to_string(),
+            old_tx,
+            "192.168.1.10".to_string(),
+            "ws".to_string(),
+        );
+        state.register_session(
+            "new-session".to_string(),
+            "phone-1".to_string(),
+            "Phone".to_string(),
+            new_tx,
+            "192.168.1.11".to_string(),
+            "ws".to_string(),
+        );
+
+        let received = old_rx.try_recv().expect("old session should be closed");
+        assert!(matches!(received, axum::extract::ws::Message::Close(_)));
+        let inner = state.inner.lock().unwrap();
+        assert_eq!(
+            inner.active_sessions.get("phone-1").unwrap().session_id,
+            "new-session"
+        );
+    }
+
+    #[test]
+    fn register_session_keeps_distinct_devices_online_independently() {
+        let state = AppState::new([0; 32], [0; 32], true);
+        let (phone_a_tx, mut phone_a_rx) = tokio::sync::mpsc::channel(1);
+        let (phone_b_tx, mut phone_b_rx) = tokio::sync::mpsc::channel(1);
+
+        state.register_session(
+            "session-a".to_string(),
+            "phone-a".to_string(),
+            "Phone A".to_string(),
+            phone_a_tx,
+            "192.168.1.10".to_string(),
+            "ws".to_string(),
+        );
+        state.register_session(
+            "session-b".to_string(),
+            "phone-b".to_string(),
+            "Phone B".to_string(),
+            phone_b_tx,
+            "192.168.1.11".to_string(),
+            "ws".to_string(),
+        );
+
+        assert!(phone_a_rx.try_recv().is_err());
+        assert!(phone_b_rx.try_recv().is_err());
+
+        let inner = state.inner.lock().unwrap();
+        assert_eq!(inner.active_sessions.len(), 2);
+        assert_eq!(
+            inner.active_sessions.get("phone-a").unwrap().session_id,
+            "session-a"
+        );
+        assert_eq!(
+            inner.active_sessions.get("phone-b").unwrap().session_id,
+            "session-b"
+        );
     }
 }

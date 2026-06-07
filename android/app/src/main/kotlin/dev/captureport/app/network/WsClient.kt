@@ -52,6 +52,12 @@ class WsClient(
     private val pendingPhotoUploads = java.util.concurrent.ConcurrentLinkedQueue<File>()
 
     companion object {
+        fun isConnectionLoopActive(state: String): Boolean {
+            return state == "Connected" ||
+                state.startsWith("Connecting") ||
+                state.startsWith("Reconnecting")
+        }
+
         fun endpointTargets(
             device: PairedDevice,
             mode: ReceiverConnectionMode,
@@ -81,6 +87,7 @@ class WsClient(
     fun connect(device: PairedDevice) {
         disconnect() // Cleanly shut down existing socket and cancel background loop
         activeDevice = device
+        _connectionState.value = "Connecting..."
         
         val attemptId = connectionAttempt.incrementAndGet()
         scope.launch(Dispatchers.IO) {
@@ -157,7 +164,16 @@ class WsClient(
                                     }
                                 }
 
+                                override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                                    if (_connectionState.value == "Connected") {
+                                        _connectionState.value = "Disconnected"
+                                    }
+                                }
+
                                 override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                                    if (_connectionState.value == "Connected") {
+                                        _connectionState.value = "Disconnected"
+                                    }
                                     hostSuccess.complete(false)
                                 }
                             }
@@ -260,7 +276,7 @@ class WsClient(
                         val duration = envelope.params?.optLong("duration_seconds") ?: 10L
                         val app = CapturePortApp.instance
                         val activeCam = app.cameraController
-                        if (app.canServeRemoteCameraCapture()) {
+                        if (app.canServeRemoteVideoCapture()) {
                             if (isRecordingVideo || activeCam.isRecording) {
                                 scope.launch(Dispatchers.IO) {
                                     sendCaptureRejected(ws, envelope.id, "Camera is already recording video")

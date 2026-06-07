@@ -1,5 +1,5 @@
 use crate::clipboard::{get_platform_sink, ClipboardSink};
-use crate::state::{AppState, DeviceInfo, MediaItem};
+use crate::state::{AppState, DeviceInfo};
 use crate::ws::envelope::{BinaryFrame, Envelope};
 use axum::extract::ws::{Message, WebSocket};
 use base64::prelude::*;
@@ -90,10 +90,8 @@ impl SocketHandler {
 
         // Reading WebSocket messages loop
         loop {
-            let next_msg = tokio::time::timeout(
-                std::time::Duration::from_secs(20),
-                receiver.next()
-            ).await;
+            let next_msg =
+                tokio::time::timeout(std::time::Duration::from_secs(20), receiver.next()).await;
 
             let msg = match next_msg {
                 Ok(Some(Ok(msg))) => msg,
@@ -105,7 +103,9 @@ impl SocketHandler {
                     break;
                 }
                 Err(_) => {
-                    tracing::warn!("WebSocket read timeout (20 seconds), client likely dropped connection");
+                    tracing::warn!(
+                        "WebSocket read timeout (20 seconds), client likely dropped connection"
+                    );
                     break;
                 }
             };
@@ -592,8 +592,13 @@ impl SocketHandler {
                                         .as_millis()
                                         as u64;
 
-                                    let file_name =
-                                        format!("CP_{}_{}.jpg", timestamp, frame.frame_seq);
+                                    let label = crate::media::media_file_stem(
+                                        "photo",
+                                        timestamp,
+                                        &dev_name,
+                                        &format!("seq-{}", frame.frame_seq),
+                                    );
+                                    let file_name = format!("{label}.jpg");
                                     let pictures_dir = dirs::picture_dir()
                                         .unwrap_or_else(|| std::path::PathBuf::from("."))
                                         .join("CapturePort");
@@ -615,26 +620,31 @@ impl SocketHandler {
                                         // Encode base64 thumbnail for UI
                                         let b64_data = BASE64_STANDARD.encode(&frame.payload);
 
-                                        let media_item = MediaItem {
-                                            id: ulid::Ulid::new().to_string(),
-                                            kind: "photo".to_string(),
-                                            path: file_path.to_string_lossy().to_string(),
-                                            timestamp,
-                                            size_bytes: frame.payload.len() as u64,
-                                            width: 1920, // Approximate standard downscale
-                                            height: 1080,
-                                            base64_data: Some(b64_data),
-                                            device_id: dev_id.clone(),
-                                            device_name: dev_name.clone(),
-                                        };
-
-                                        {
-                                            let mut inner = state.inner.lock().unwrap();
-                                            inner.media_history.insert(0, media_item.clone());
-                                            if inner.media_history.len() > 20 {
-                                                inner.media_history.truncate(20);
+                                        let media_item = match crate::media::register_media_item(
+                                            &state,
+                                            crate::media::MediaInsert {
+                                                kind: "photo".to_string(),
+                                                path: file_path.clone(),
+                                                timestamp,
+                                                size_bytes: frame.payload.len() as u64,
+                                                width: 1920,
+                                                height: 1080,
+                                                device_id: dev_id.clone(),
+                                                device_name: dev_name.clone(),
+                                                source_request_id: None,
+                                                inline_image: Some(b64_data),
+                                                capture_origin: "phone_push".to_string(),
+                                            },
+                                        ) {
+                                            Ok(item) => item,
+                                            Err(e) => {
+                                                tracing::error!(
+                                                    "Failed to register photo media item: {:?}",
+                                                    e
+                                                );
+                                                continue;
                                             }
-                                        }
+                                        };
 
                                         // Emit event to UI
                                         if let Some(h) = &app_handle {
@@ -692,8 +702,10 @@ impl SocketHandler {
                                             .as_millis()
                                             as u64;
 
-                                        let final_file_name =
-                                            format!("CP_{}_{}.mp4", timestamp, request_id);
+                                        let label = crate::media::media_file_stem(
+                                            "video", timestamp, &dev_name, request_id,
+                                        );
+                                        let final_file_name = format!("{label}.mp4");
                                         let final_file_path = pictures_dir.join(final_file_name);
 
                                         // Move part file to final destination
@@ -711,37 +723,47 @@ impl SocketHandler {
                                                 .map(|m| m.len())
                                                 .unwrap_or(0);
 
-                                            let media_item = MediaItem {
-                                                id: ulid::Ulid::new().to_string(),
-                                                kind: "video".to_string(),
-                                                path: final_file_path.to_string_lossy().to_string(),
-                                                timestamp,
-                                                size_bytes,
-                                                width: 1280,
-                                                height: 720,
-                                                base64_data: None, // Video files don't require inline base64 previews
-                                                device_id: dev_id.clone(),
-                                                device_name: dev_name.clone(),
+                                            let media_item = match crate::media::register_media_item(
+                                                &state,
+                                                crate::media::MediaInsert {
+                                                    kind: "video".to_string(),
+                                                    path: final_file_path.clone(),
+                                                    timestamp,
+                                                    size_bytes,
+                                                    width: 1280,
+                                                    height: 720,
+                                                    device_id: dev_id.clone(),
+                                                    device_name: dev_name.clone(),
+                                                    source_request_id: Some(request_id.to_string()),
+                                                    inline_image: None,
+                                                    capture_origin: "mcp_record_video".to_string(),
+                                                },
+                                            ) {
+                                                Ok(item) => item,
+                                                Err(e) => {
+                                                    tracing::error!(
+                                                        "Failed to register video media item: {:?}",
+                                                        e
+                                                    );
+                                                    continue;
+                                                }
                                             };
 
-                                            {
-                                                let mut inner = state.inner.lock().unwrap();
-                                                inner.media_history.insert(0, media_item.clone());
-                                                if inner.media_history.len() > 20 {
-                                                    inner.media_history.truncate(20);
-                                                }
-                                            }
-
                                             if let Some(h) = &app_handle {
-                                                let _ = h.emit("media-received", media_item);
+                                                let _ =
+                                                    h.emit("media-received", media_item.clone());
                                             }
 
                                             // Complete pending oneshot request correlation if triggered remotely
-                                            state.complete_request(request_id, Ok(json!({
-                                                "status": "success",
-                                                "path": final_file_path.to_string_lossy().to_string(),
-                                                "size_bytes": size_bytes
-                                            })));
+                                            state.complete_request(
+                                                request_id,
+                                                Ok(json!({
+                                                    "status": "success",
+                                                    "path": final_file_path.to_string_lossy().to_string(),
+                                                    "size_bytes": size_bytes,
+                                                    "media": crate::media::media_summary(&media_item)
+                                                })),
+                                            );
                                         }
                                     }
                                 }
@@ -758,15 +780,59 @@ impl SocketHandler {
                                             );
                                             break;
                                         }
-                                        // Complete oneshot directly returning raw JPEG payload values in base64
+                                        let timestamp = SystemTime::now()
+                                            .duration_since(SystemTime::UNIX_EPOCH)
+                                            .unwrap_or_default()
+                                            .as_millis()
+                                            as u64;
                                         let b64_data = BASE64_STANDARD.encode(&frame.payload);
+                                        let label = crate::media::media_file_stem(
+                                            "photo", timestamp, &dev_name, req_id,
+                                        );
+                                        let pictures_dir = dirs::picture_dir()
+                                            .unwrap_or_else(|| std::path::PathBuf::from("."))
+                                            .join("CapturePort");
+                                        let _ = std::fs::create_dir_all(&pictures_dir);
+                                        let file_path = pictures_dir.join(format!("{label}.jpg"));
+                                        let _ = std::fs::write(&file_path, &frame.payload);
+                                        let media_item = match crate::media::register_media_item(
+                                            &state,
+                                            crate::media::MediaInsert {
+                                                kind: "photo".to_string(),
+                                                path: file_path.clone(),
+                                                timestamp,
+                                                size_bytes: frame.payload.len() as u64,
+                                                width: 1920,
+                                                height: 1080,
+                                                device_id: dev_id.clone(),
+                                                device_name: dev_name.clone(),
+                                                source_request_id: Some(req_id.to_string()),
+                                                inline_image: Some(b64_data.clone()),
+                                                capture_origin: "mcp_capture_photo".to_string(),
+                                            },
+                                        ) {
+                                            Ok(item) => item,
+                                            Err(e) => {
+                                                tracing::error!(
+                                                    "Failed to register MCP photo media item: {:?}",
+                                                    e
+                                                );
+                                                continue;
+                                            }
+                                        };
+                                        if let Some(h) = &app_handle {
+                                            let _ = h.emit("media-received", media_item.clone());
+                                        }
+
+                                        // Complete oneshot directly returning raw JPEG payload values and metadata.
                                         state.complete_request(
                                             req_id,
                                             Ok(json!({
                                                 "status": "success",
                                                 "base64_data": b64_data,
                                                 "mime_type": "image/jpeg",
-                                                "size_bytes": frame.payload.len()
+                                                "size_bytes": frame.payload.len(),
+                                                "media": crate::media::media_summary(&media_item)
                                             })),
                                         );
                                     }
@@ -786,7 +852,11 @@ impl SocketHandler {
             if let Some(h) = &app_handle {
                 let _ = h.emit("devices-changed", ());
             }
-            tracing::info!("WebSocket connection closed for device: {} (session: {})", device_id, session_id);
+            tracing::info!(
+                "WebSocket connection closed for device: {} (session: {})",
+                device_id,
+                session_id
+            );
         }
 
         sender_task.abort();

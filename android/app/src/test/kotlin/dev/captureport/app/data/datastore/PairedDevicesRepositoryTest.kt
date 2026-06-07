@@ -123,4 +123,28 @@ class PairedDevicesRepositoryTest {
         assertEquals("New Hostname", updated.name)
         assertEquals("Desk PC", updated.alias)
     }
+
+    @Test
+    fun selectDeviceSwitchesActivePcWithoutRemovingOtherReceivers() = runBlocking {
+        val laptop = PairedDevice.newBuilder()
+            .setId("pc-laptop")
+            .setName("Laptop")
+            .setOs("windows")
+            .build()
+        val desktop = PairedDevice.newBuilder()
+            .setId("pc-desktop")
+            .setName("Desktop")
+            .setOs("linux")
+            .build()
+
+        repository.addDevice(laptop)
+        repository.addDevice(desktop)
+        repository.selectDevice("pc-laptop")
+
+        val devices = repository.pairedDevicesFlow.first()
+        val selected = repository.selectedDeviceFlow.first()
+
+        assertEquals(listOf("pc-laptop", "pc-desktop"), devices.map { it.id })
+        assertEquals("pc-laptop", selected?.id)
+    }
 }

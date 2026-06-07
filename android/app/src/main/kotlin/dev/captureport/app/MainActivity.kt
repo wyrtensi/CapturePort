@@ -4,7 +4,6 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
-import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -19,14 +18,10 @@ import androidx.lifecycle.ViewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
-import dev.captureport.app.network.WsClient
 import dev.captureport.app.pairing.PairingScreen
 import dev.captureport.app.pairing.PairingViewModel
 import dev.captureport.app.receivers.ReceiversScreen
 import dev.captureport.app.receivers.ReceiversViewModel
-import java.io.File
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.Dispatchers
 
 class MainActivity : ComponentActivity() {
 
@@ -71,30 +66,7 @@ class MainActivity : ComponentActivity() {
 
         val app = application as CapturePortApp
         
-        // Instantiate the global WsClient if not done already
-        if (app.wsClient == null) {
-            app.wsClient = WsClient(
-                context = applicationContext,
-                scope = app.applicationScope,
-                onCaptureRequest = { onPhotoSnapped, onCaptureRejected ->
-                    app.applicationScope.launch(Dispatchers.Main) {
-                        val activeCam = app.cameraController
-                        if (app.canServeRemoteCameraCapture()) {
-                            activeCam.takePhoto(
-                                onSuccess = { file -> onPhotoSnapped(file) },
-                                onError = { err ->
-                                    Log.e("MainActivity", "MCP photo snap failed: ${err.message}")
-                                    onCaptureRejected("camera capture failed")
-                                }
-                            )
-                        } else {
-                            Log.w("MainActivity", "Remote camera capture rejected: camera unavailable in ScreenOnly mode")
-                            onCaptureRejected("camera unavailable while app screen is not open")
-                        }
-                    }
-                }
-            )
-        }
+        app.ensureWsClient()
 
         // Build ViewModels
         val receiversViewModel = ViewModelProvider(

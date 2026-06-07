@@ -3,6 +3,9 @@ package dev.captureport.app.receivers
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
+import android.os.PowerManager
+import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -59,10 +62,10 @@ import androidx.camera.video.VideoRecordEvent
 import dev.captureport.app.CapturePortApp
 import dev.captureport.app.CameraCapturePolicy
 import dev.captureport.app.ReceiverConnectionMode
+import dev.captureport.app.shouldShowXiaomiAutostartHint
 import dev.captureport.app.camera.CameraController
 import dev.captureport.app.data.PairedDevice
 import dev.captureport.app.transfer.TransferService
-import dev.captureport.app.service.CapturePortService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -99,6 +102,12 @@ fun ReceiversScreen(
     var showSettingsMenu by rememberSaveable { mutableStateOf(false) }
     var currentPolicy by remember { mutableStateOf(app.cameraCapturePolicy) }
     var receiverConnectionMode by remember { mutableStateOf(app.receiverConnectionMode) }
+    val isBackgroundCameraArmed by app.isBackgroundCameraArmedFlow.collectAsState()
+    val isBackgroundMicrophoneArmed by app.isBackgroundMicrophoneArmedFlow.collectAsState()
+    var batteryUnrestricted by remember { mutableStateOf(isIgnoringBatteryOptimizations(context)) }
+    val isXiaomiDevice = remember {
+        shouldShowXiaomiAutostartHint(Build.MANUFACTURER, Build.DISPLAY)
+    }
 
     var rotationLockMode by rememberSaveable { mutableStateOf(RotationLockMode.AUTO) }
     var physicalRotation by remember { mutableStateOf(0) }
@@ -268,10 +277,69 @@ fun ReceiversScreen(
         }
     }
 
+    fun backgroundCameraPermissions(): Array<String> {
+        return buildList {
+            add(android.Manifest.permission.CAMERA)
+            add(android.Manifest.permission.RECORD_AUDIO)
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                add(android.Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }.toTypedArray()
+    }
+
+    fun missingPermissions(permissions: Array<String>): Array<String> {
+        return permissions.filter { permission ->
+            ContextCompat.checkSelfPermission(
+                context,
+                permission
+            ) != android.content.pm.PackageManager.PERMISSION_GRANTED
+        }.toTypedArray()
+    }
+
+    var pendingCameraPolicy by remember { mutableStateOf<CameraCapturePolicy?>(null) }
+    val backgroundCameraPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) { grants ->
+        val policy = pendingCameraPolicy
+        pendingCameraPolicy = null
+        val allGranted = backgroundCameraPermissions().all { permission ->
+            grants[permission] == true || ContextCompat.checkSelfPermission(
+                context,
+                permission
+            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        }
+        if (policy == CameraCapturePolicy.Background && allGranted) {
+            app.applyCameraCapturePolicy(policy)
+            currentPolicy = policy
+            app.updateBackgroundService()
+        } else if (policy == CameraCapturePolicy.Background) {
+            Toast.makeText(
+                context,
+                "Camera, microphone, and notification permissions are required for background capture.",
+                Toast.LENGTH_LONG
+            ).show()
+        }
+    }
+
+    val audioPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            app.updateBackgroundService()
+        } else {
+            Toast.makeText(
+                context,
+                "Microphone permission is required for video recording.",
+                Toast.LENGTH_LONG
+            ).show()
+        }
+    }
+
     DisposableEffect(cameraController, lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
                 Lifecycle.Event.ON_START, Lifecycle.Event.ON_RESUME -> {
+                    batteryUnrestricted = isIgnoringBatteryOptimizations(context)
                     app.isCameraScreenVisible = true
                     cameraController.bindToLifecycle(lifecycleOwner)
                     app.updateBackgroundService()
@@ -295,17 +363,9 @@ fun ReceiversScreen(
     LaunchedEffect(selectedDevice) {
         val dev = selectedDevice
         if (dev != null) {
-            val intent = Intent(context, CapturePortService::class.java).apply {
-                action = CapturePortService.ACTION_START
-            }
-            ContextCompat.startForegroundService(context, intent)
-            app.wsClient?.connect(dev)
+            app.reconnectToDevice(dev)
         } else {
-            val intent = Intent(context, CapturePortService::class.java).apply {
-                action = CapturePortService.ACTION_STOP
-            }
-            context.stopService(intent)
-            app.wsClient?.disconnect()
+            app.disconnectFromReceiver()
         }
     }
 
@@ -327,6 +387,14 @@ fun ReceiversScreen(
 
     fun applyCameraMode(policy: CameraCapturePolicy) {
         if (currentPolicy == policy) return
+        if (policy == CameraCapturePolicy.Background) {
+            val missing = missingPermissions(backgroundCameraPermissions())
+            if (missing.isNotEmpty()) {
+                pendingCameraPolicy = policy
+                backgroundCameraPermissionLauncher.launch(missing)
+                return
+            }
+        }
         app.applyCameraCapturePolicy(policy)
         currentPolicy = policy
     }
@@ -335,7 +403,52 @@ fun ReceiversScreen(
         if (receiverConnectionMode == mode) return
         app.applyReceiverConnectionMode(mode)
         receiverConnectionMode = mode
-        selectedDevice?.let { app.wsClient?.connect(it) }
+        selectedDevice?.let { app.reconnectToDevice(it) }
+    }
+
+    fun requestBackgroundReadinessPermissions() {
+        val missing = missingPermissions(backgroundCameraPermissions())
+        if (missing.isNotEmpty()) {
+            pendingCameraPolicy = CameraCapturePolicy.Background
+            backgroundCameraPermissionLauncher.launch(missing)
+        } else {
+            app.applyCameraCapturePolicy(CameraCapturePolicy.Background)
+            currentPolicy = CameraCapturePolicy.Background
+            app.updateBackgroundService()
+        }
+    }
+
+    fun openBatterySettings() {
+        val intent = if (!isIgnoringBatteryOptimizations(context)) {
+            Intent(
+                Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                Uri.parse("package:${context.packageName}")
+            )
+        } else {
+            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}"))
+        }
+        runCatching {
+            context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        }.onFailure {
+            context.startActivity(
+                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}"))
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+        }
+    }
+
+    fun openXiaomiAutostartSettings() {
+        val candidates = listOf(
+            Intent().setClassName(
+                "com.miui.securitycenter",
+                "com.miui.permcenter.autostart.AutoStartManagementActivity"
+            ),
+            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}"))
+        )
+        val intent = candidates.firstOrNull {
+            it.resolveActivity(context.packageManager) != null
+        } ?: candidates.last()
+        context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     }
 
     BackHandler(enabled = showSettingsMenu) {
@@ -462,7 +575,14 @@ fun ReceiversScreen(
                                         .clip(RoundedCornerShape(16.dp))
                                         .background(bgCol)
                                         .border(BorderStroke(1.dp, borderCol), RoundedCornerShape(16.dp))
-                                        .clickable { viewModel.selectDevice(device) }
+                                        .clickable {
+                                            if (isSelected) {
+                                                app.reconnectToDevice(device)
+                                                Toast.makeText(context, "Reconnecting to ${displayName}...", Toast.LENGTH_SHORT).show()
+                                            } else {
+                                                viewModel.selectDevice(device)
+                                            }
+                                        }
                                         .padding(horizontal = 14.dp, vertical = 12.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
@@ -588,7 +708,7 @@ fun ReceiversScreen(
                                 ) == android.content.pm.PackageManager.PERMISSION_GRANTED
 
                                 if (!hasAudioPermission) {
-                                    Toast.makeText(context, "Microphone permission is required for video recording", Toast.LENGTH_LONG).show()
+                                    audioPermissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
                                 } else {
                                     try {
                                         cameraController.startVideoRecording { event ->
@@ -728,6 +848,19 @@ fun ReceiversScreen(
             exit = fadeOut(tween(200)) + scaleOut(tween(250, easing = FastOutSlowInEasing))
         ) {
             val isLandscape = currentRotation == 90 || currentRotation == 270
+            val cameraPermissionGranted = ContextCompat.checkSelfPermission(
+                context,
+                android.Manifest.permission.CAMERA
+            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+            val microphonePermissionGranted = ContextCompat.checkSelfPermission(
+                context,
+                android.Manifest.permission.RECORD_AUDIO
+            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+            val notificationsGranted = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+                ContextCompat.checkSelfPermission(
+                    context,
+                    android.Manifest.permission.POST_NOTIFICATIONS
+                ) == android.content.pm.PackageManager.PERMISSION_GRANTED
             RotatedLayout(
                 rotation = iconRotation,
                 modifier = Modifier
@@ -744,9 +877,19 @@ fun ReceiversScreen(
                         currentPolicy = currentPolicy,
                         receiverConnectionMode = receiverConnectionMode,
                         rotationLockMode = rotationLockMode,
+                        cameraPermissionGranted = cameraPermissionGranted,
+                        microphonePermissionGranted = microphonePermissionGranted,
+                        notificationsGranted = notificationsGranted,
+                        batteryUnrestricted = batteryUnrestricted,
+                        isBackgroundCameraArmed = isBackgroundCameraArmed,
+                        isBackgroundMicrophoneArmed = isBackgroundMicrophoneArmed,
+                        isXiaomiDevice = isXiaomiDevice,
                         onCameraModeChange = { applyCameraMode(it) },
                         onConnectionModeChange = { applyConnectionMode(it) },
                         onRotationLockChange = { rotationLockMode = it },
+                        onRequestReadinessPermissions = { requestBackgroundReadinessPermissions() },
+                        onOpenBatterySettings = { openBatterySettings() },
+                        onOpenXiaomiAutostartSettings = { openXiaomiAutostartSettings() },
                         onNavigateToPairing = {
                             showSettingsMenu = false
                             onNavigateToPairing()
@@ -759,9 +902,19 @@ fun ReceiversScreen(
                         currentPolicy = currentPolicy,
                         receiverConnectionMode = receiverConnectionMode,
                         rotationLockMode = rotationLockMode,
+                        cameraPermissionGranted = cameraPermissionGranted,
+                        microphonePermissionGranted = microphonePermissionGranted,
+                        notificationsGranted = notificationsGranted,
+                        batteryUnrestricted = batteryUnrestricted,
+                        isBackgroundCameraArmed = isBackgroundCameraArmed,
+                        isBackgroundMicrophoneArmed = isBackgroundMicrophoneArmed,
+                        isXiaomiDevice = isXiaomiDevice,
                         onCameraModeChange = { applyCameraMode(it) },
                         onConnectionModeChange = { applyConnectionMode(it) },
                         onRotationLockChange = { rotationLockMode = it },
+                        onRequestReadinessPermissions = { requestBackgroundReadinessPermissions() },
+                        onOpenBatterySettings = { openBatterySettings() },
+                        onOpenXiaomiAutostartSettings = { openXiaomiAutostartSettings() },
                         onNavigateToPairing = {
                             showSettingsMenu = false
                             onNavigateToPairing()
@@ -1101,6 +1254,11 @@ private fun copyUriToCache(context: Context, uri: Uri): File? {
     }
 }
 
+private fun isIgnoringBatteryOptimizations(context: Context): Boolean {
+    val powerManager = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
+    return powerManager?.isIgnoringBatteryOptimizations(context.packageName) ?: true
+}
+
 @Composable
 private fun SettingsStatusPill(
     text: String,
@@ -1130,6 +1288,131 @@ private fun SettingsStatusPill(
             fontWeight = FontWeight.Bold,
             maxLines = 1
         )
+    }
+}
+
+@Composable
+private fun ReadinessChecklistRow(
+    label: String,
+    ready: Boolean,
+    modifier: Modifier = Modifier,
+    isLandscape: Boolean = false,
+    actionLabel: String? = null,
+    onAction: (() -> Unit)? = null
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(top = if (isLandscape) 3.dp else 5.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(if (isLandscape) 5.dp else 6.dp)
+                .clip(CircleShape)
+                .background(if (ready) Color(0xFF4CAF50) else Color(0xFFFFC107))
+        )
+        Spacer(modifier = Modifier.width(7.dp))
+        Text(
+            text = label,
+            color = Color.White.copy(alpha = if (ready) 0.82f else 0.95f),
+            fontSize = if (isLandscape) 9.sp else 10.sp,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f)
+        )
+        if (!ready && actionLabel != null && onAction != null) {
+            TextButton(
+                onClick = onAction,
+                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
+                modifier = Modifier.height(if (isLandscape) 24.dp else 28.dp)
+            ) {
+                Text(
+                    text = actionLabel,
+                    color = Color(0xFFA4B4FF),
+                    fontSize = if (isLandscape) 9.sp else 10.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun BackgroundReadinessSection(
+    currentPolicy: CameraCapturePolicy,
+    cameraPermissionGranted: Boolean,
+    microphonePermissionGranted: Boolean,
+    notificationsGranted: Boolean,
+    batteryUnrestricted: Boolean,
+    isBackgroundCameraArmed: Boolean,
+    isBackgroundMicrophoneArmed: Boolean,
+    isXiaomiDevice: Boolean,
+    modifier: Modifier = Modifier,
+    isLandscape: Boolean = false,
+    onRequestPermissions: () -> Unit,
+    onOpenBatterySettings: () -> Unit,
+    onOpenXiaomiAutostartSettings: () -> Unit
+) {
+    val backgroundSelected = currentPolicy == CameraCapturePolicy.Background
+    SettingsSectionCard(
+        title = "Background mode readiness",
+        caption = if (backgroundSelected) {
+            "Checks needed for remote camera and video while the app is not open."
+        } else {
+            "Switch camera capture to Background to arm remote capture outside the app."
+        },
+        isLandscape = isLandscape,
+        modifier = modifier
+    ) {
+        ReadinessChecklistRow(
+            label = "Camera permission",
+            ready = cameraPermissionGranted,
+            isLandscape = isLandscape,
+            actionLabel = "Allow",
+            onAction = onRequestPermissions
+        )
+        ReadinessChecklistRow(
+            label = "Microphone permission",
+            ready = microphonePermissionGranted,
+            isLandscape = isLandscape,
+            actionLabel = "Allow",
+            onAction = onRequestPermissions
+        )
+        ReadinessChecklistRow(
+            label = "Notifications",
+            ready = notificationsGranted,
+            isLandscape = isLandscape,
+            actionLabel = "Allow",
+            onAction = onRequestPermissions
+        )
+        ReadinessChecklistRow(
+            label = "Battery unrestricted",
+            ready = batteryUnrestricted,
+            isLandscape = isLandscape,
+            actionLabel = "Open",
+            onAction = onOpenBatterySettings
+        )
+        ReadinessChecklistRow(
+            label = "Camera service armed",
+            ready = !backgroundSelected || isBackgroundCameraArmed,
+            isLandscape = isLandscape
+        )
+        ReadinessChecklistRow(
+            label = "Microphone service armed",
+            ready = !backgroundSelected || isBackgroundMicrophoneArmed,
+            isLandscape = isLandscape
+        )
+        if (isXiaomiDevice) {
+            ReadinessChecklistRow(
+                label = "Xiaomi autostart",
+                ready = false,
+                isLandscape = isLandscape,
+                actionLabel = "Check",
+                onAction = onOpenXiaomiAutostartSettings
+            )
+        }
     }
 }
 
@@ -1274,9 +1557,19 @@ private fun PortraitSettingsMenu(
     currentPolicy: CameraCapturePolicy,
     receiverConnectionMode: ReceiverConnectionMode,
     rotationLockMode: RotationLockMode,
+    cameraPermissionGranted: Boolean,
+    microphonePermissionGranted: Boolean,
+    notificationsGranted: Boolean,
+    batteryUnrestricted: Boolean,
+    isBackgroundCameraArmed: Boolean,
+    isBackgroundMicrophoneArmed: Boolean,
+    isXiaomiDevice: Boolean,
     onCameraModeChange: (CameraCapturePolicy) -> Unit,
     onConnectionModeChange: (ReceiverConnectionMode) -> Unit,
     onRotationLockChange: (RotationLockMode) -> Unit,
+    onRequestReadinessPermissions: () -> Unit,
+    onOpenBatterySettings: () -> Unit,
+    onOpenXiaomiAutostartSettings: () -> Unit,
     onNavigateToPairing: () -> Unit
 ) {
     Box(
@@ -1349,6 +1642,22 @@ private fun PortraitSettingsMenu(
                     }
                 }
             }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            BackgroundReadinessSection(
+                currentPolicy = currentPolicy,
+                cameraPermissionGranted = cameraPermissionGranted,
+                microphonePermissionGranted = microphonePermissionGranted,
+                notificationsGranted = notificationsGranted,
+                batteryUnrestricted = batteryUnrestricted,
+                isBackgroundCameraArmed = isBackgroundCameraArmed,
+                isBackgroundMicrophoneArmed = isBackgroundMicrophoneArmed,
+                isXiaomiDevice = isXiaomiDevice,
+                onRequestPermissions = onRequestReadinessPermissions,
+                onOpenBatterySettings = onOpenBatterySettings,
+                onOpenXiaomiAutostartSettings = onOpenXiaomiAutostartSettings
+            )
 
             Spacer(modifier = Modifier.height(10.dp))
 
@@ -1477,15 +1786,25 @@ private fun LandscapeSettingsMenu(
     currentPolicy: CameraCapturePolicy,
     receiverConnectionMode: ReceiverConnectionMode,
     rotationLockMode: RotationLockMode,
+    cameraPermissionGranted: Boolean,
+    microphonePermissionGranted: Boolean,
+    notificationsGranted: Boolean,
+    batteryUnrestricted: Boolean,
+    isBackgroundCameraArmed: Boolean,
+    isBackgroundMicrophoneArmed: Boolean,
+    isXiaomiDevice: Boolean,
     onCameraModeChange: (CameraCapturePolicy) -> Unit,
     onConnectionModeChange: (ReceiverConnectionMode) -> Unit,
     onRotationLockChange: (RotationLockMode) -> Unit,
+    onRequestReadinessPermissions: () -> Unit,
+    onOpenBatterySettings: () -> Unit,
+    onOpenXiaomiAutostartSettings: () -> Unit,
     onNavigateToPairing: () -> Unit
 ) {
     Box(
         modifier = Modifier
             .width(500.dp)
-            .height(220.dp)
+            .height(286.dp)
             .clip(RoundedCornerShape(24.dp))
             .background(
                 brush = Brush.verticalGradient(
@@ -1654,6 +1973,22 @@ private fun LandscapeSettingsMenu(
                         }
                     }
                 }
+
+                BackgroundReadinessSection(
+                    currentPolicy = currentPolicy,
+                    cameraPermissionGranted = cameraPermissionGranted,
+                    microphonePermissionGranted = microphonePermissionGranted,
+                    notificationsGranted = notificationsGranted,
+                    batteryUnrestricted = batteryUnrestricted,
+                    isBackgroundCameraArmed = isBackgroundCameraArmed,
+                    isBackgroundMicrophoneArmed = isBackgroundMicrophoneArmed,
+                    isXiaomiDevice = isXiaomiDevice,
+                    isLandscape = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    onRequestPermissions = onRequestReadinessPermissions,
+                    onOpenBatterySettings = onOpenBatterySettings,
+                    onOpenXiaomiAutostartSettings = onOpenXiaomiAutostartSettings
+                )
 
                 // 2. Connection Route
                 SettingsSectionCard(

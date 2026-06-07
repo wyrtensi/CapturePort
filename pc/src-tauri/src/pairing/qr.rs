@@ -25,7 +25,6 @@ impl std::str::FromStr for EndpointMode {
 }
 
 impl EndpointMode {
-
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::LocalOnly => "local-only",
@@ -226,6 +225,7 @@ impl QrGenerator {
         privkey: &[u8; 32],
         endpoints: PairingEndpoints,
         device_name: String,
+        mcp_port: u16,
     ) -> Result<(String, String, String, [u8; 32])> {
         let hosts = endpoints.advertised_hosts();
         let host = endpoints.primary_host();
@@ -268,8 +268,8 @@ impl QrGenerator {
             host, hosts_param, port, pk_b64, device_name, os, nonce_b64, sig_b64
         );
         pair_url.push_str(&format!(
-            "&local_hosts={}&local_port={}&internet_host={}&internet_port={}&endpoint_mode={}",
-            local_hosts_param, endpoints.local_port, internet_host, internet_port, mode
+            "&local_hosts={}&local_port={}&internet_host={}&internet_port={}&endpoint_mode={}&mcp_port={}",
+            local_hosts_param, endpoints.local_port, internet_host, internet_port, mode, mcp_port
         ));
 
         // 5. Generate fingerprint: first 8 bytes of sha256(pk) formatted as hex split by colons

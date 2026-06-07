@@ -105,7 +105,8 @@ sequenceDiagram
 
 CapturePort is engineered from the ground up for strict local privacy:
 
-- **Local Loopback Boundary**: The MCP server binds strictly to `127.0.0.1`. This isolates the model interface, preventing malicious execution or port scanning from external network nodes.
+- **Configurable MCP Boundary**: The MCP Streamable HTTP endpoint is discoverable on the LAN by default for nearby IDE agents and inspectors, with allowed Host/Origin checks derived from local pairing hosts. Set `mcpHttpBindMode` to `loopback` or apply the `privacy_first` / `local_agent` preset to keep the MCP endpoint on `127.0.0.1`.
+- **Optional MCP Bearer Token**: Set `mcpHttpAuthToken` to require `Authorization: Bearer <token>` on the LAN Streamable HTTP endpoint. The token is never advertised over mDNS or returned by `get_mcp_settings`; settings summaries only report whether auth is enabled.
 - **Path Traversal & RCE Defeated**: All inbound client parameters (such as `request_id`) undergo strict alphanumeric validation using `^[a-zA-Z0-9_\-]+$` matching. Directory traversal sequences (`..`, `/`, `\`) or shell injection operators are rejected, and violations trigger instant connection teardown.
 - **Hardware-Backed Keys**: Jetpack Compose client key material is generated inside the **Android Keystore System** using `KeyProperties.DIGEST_NONE`. The private key remains secured in the hardware-isolated Trusted Execution Environment (TEE) or StrongBox, ensuring it cannot be extracted by malicious root entities.
 - **Network Security Configuration**: Cleartext traffic is permitted globally via `network_security_config.xml` to enable connections to arbitrary LAN IPs over standard `ws://` WebSocket connections, since Android cannot dynamically restrict cleartext configurations to private CIDR ranges.
@@ -117,7 +118,8 @@ CapturePort is engineered from the ground up for strict local privacy:
 
 ### Camera Capture Policies
 - **Screen Only** ("Camera: screen only"): Captures photos or records video only while the Android app is visible on the screen.
-- **Background** ("Camera: background"): *Note: Background capture is currently restricted by Android OS and CameraX lifecycle constraints.*
+- **Background** ("Camera: background"): Uses a foreground service with the camera service type. Background video with audio also requires the microphone service type and `RECORD_AUDIO`. On Android 14+, camera and microphone foreground services must be armed while the app has a visible activity; if Android restores the service from the background, open CapturePort once to re-arm background capture.
+- The Android receiver settings include a **Background mode readiness** checklist for camera, microphone, notifications, battery optimization, foreground-service arming, and Xiaomi/HyperOS autostart guidance.
 
 ### Connection Route Modes
 - **Local** ("Local only"): Forces the socket to only try LAN IP addresses.
@@ -133,11 +135,13 @@ CapturePort is engineered from the ground up for strict local privacy:
 
 ## Model Context Protocol (MCP) Setup
 
-CapturePort acts as an MCP server, empowering AI tools with vision (real-time camera feeds) and clipboard access on your machine.
+CapturePort acts as an MCP server, empowering AI tools with vision, recent capture history, and clipboard access on your machine. The desktop app starts a Streamable HTTP MCP endpoint at `http://<desktop-lan-ip>:7879/mcp` by default and advertises it over mDNS as `_captureport-mcp._tcp.local.`.
+
+Received media is indexed from `~/Pictures/CapturePort` on startup and persisted in the CapturePort app data directory. MCP clients can inspect already received photos and videos through `list_media`, `search_media`, `get_media`, `compare_media`, and MCP resources such as `captureport://media/{id}`, `captureport://media/{id}/thumbnail`, and `camera://latest`. Inline image data is controlled by `mcpInlineImagesEnabled`; disk indexing and resource reads can be disabled with `mcpMediaIndexEnabled` and `mcpResourceReadsEnabled`.
 
 ### Claude Desktop Integration
 
-Claude Desktop runs MCP servers locally over stdio pipes. Since the primary CapturePort process is built into the main desktop application, you can configure Claude Desktop to launch the CapturePort executable directly with the headless flag:
+Claude Desktop runs MCP servers locally over stdio pipes. Use the standalone stdio binary when it is installed; otherwise use the main CapturePort executable with `--mcp-stdio`.
 
 1. Locate or create your Claude Desktop configuration file:
    - **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
@@ -148,8 +152,8 @@ Claude Desktop runs MCP servers locally over stdio pipes. Since the primary Capt
 {
   "mcpServers": {
     "captureport": {
-      "command": "C:\\Program Files\\CapturePort\\CapturePort.exe",
-      "args": ["--mcp-stdio"],
+      "command": "C:\\Program Files\\CapturePort\\captureport-mcp.exe",
+      "args": [],
       "env": {
         "RUST_LOG": "info"
       }
@@ -158,17 +162,32 @@ Claude Desktop runs MCP servers locally over stdio pipes. Since the primary Capt
 }
 ```
 
+Fallback command:
+
+```json
+{
+  "mcpServers": {
+    "captureport": {
+      "command": "C:\\Program Files\\CapturePort\\CapturePort.exe",
+      "args": ["--mcp-stdio"]
+    }
+  }
+}
+```
+
 ### Cursor Integration
 
-Cursor connects to MCP servers using stdio pipes.
+Cursor can connect either to the advertised Streamable HTTP endpoint or to stdio.
 
 1. Open Cursor and navigate to **Settings** -> **Features** -> **MCP**.
 2. Click **+ Add New MCP Server**.
 3. Fill out the dialog with these parameters:
    - **Name**: `CapturePort`
    - **Type**: `command`
-   - **Command**: `C:\Program Files\CapturePort\CapturePort.exe --mcp-stdio`
+   - **Command**: `C:\Program Files\CapturePort\captureport-mcp.exe`
 4. Click **Save**.
+
+Useful MCP tools include `look_camera`, `watch_camera`, `list_media`, `search_media`, `get_media`, `compare_media`, `camera_status`, `list_agent_presets`, `apply_agent_preset`, `get_mcp_settings`, and `set_mcp_settings`. `list_devices` returns a stable `target_device_id` for each online MCP-exposed phone; pass that field to live tools such as `look_camera`, `record_video`, `watch_camera`, and clipboard tools when more than one phone is connected. `look_camera` captures a fresh image for ordinary request/response agents; `list_media`, `search_media`, `get_media`, and `resources/read` let agents inspect what was captured and when without dumping base64 unless a specific photo is requested and inline images are enabled.
 
 ---
 

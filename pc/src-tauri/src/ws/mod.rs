@@ -38,7 +38,9 @@ impl WsServer {
             if let Err(e) = axum::serve(
                 listener,
                 app.into_make_service_with_connect_info::<SocketAddr>(),
-            ).await {
+            )
+            .await
+            {
                 tracing::error!("Axum server runtime error: {:?}", e);
             }
         });

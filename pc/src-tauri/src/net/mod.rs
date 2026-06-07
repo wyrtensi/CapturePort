@@ -103,12 +103,18 @@ pub fn start_udp_broadcast(ws_port: u16, pc_public_key: [u8; 32]) {
             }
             ticks = ticks.wrapping_add(1);
 
+            let settings = crate::AppSettings::load();
+            let mcp_port = settings.advertised_mcp_http_port();
+
             let payload = serde_json::json!({
                 "id": pc_pub_b64,
                 "name": cached_device_name,
                 "fingerprint": fingerprint,
                 "hosts": cached_hosts_str,
                 "port": ws_port,
+                "mcp_port": mcp_port,
+                "mcp_transport": "streamable-http",
+                "mcp_path": "/mcp",
             });
 
             let payload_str = payload.to_string();

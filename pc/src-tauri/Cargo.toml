@@ -1,13 +1,18 @@
 [package]
 name = "captureport"
-version = "0.3.1"
+version = "0.3.7"
 description = "CapturePort PC Tray App & MCP Server"
 authors = ["wyrtensi"]
 edition = "2021"
+default-run = "captureport"
 
 [lib]
 name = "captureport_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "captureport-mcp"
+path = "src/bin/captureport-mcp.rs"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -25,6 +30,12 @@ futures-util = "0.3"
 mdns-sd = "0.20"
 if-addrs = "0.15"
 
+# MCP
+rmcp = { version = "1.7", features = ["transport-streamable-http-server", "reqwest", "macros", "server", "schemars", "transport-io", "transport-streamable-http-client", "client"] }
+tower = "0.5"
+schemars = { version = "1.2", features = ["derive"] }
+reqwest = "0.13"
+
 # Security & Crypto
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 rand = "0.8"
@@ -37,6 +48,7 @@ qrcodegen = "1.8"
 ring = "0.17"
 hostname = "0.4"
 image = { version = "0.25", default-features = false, features = ["jpeg"] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
 
 # Clipboard & Utilities
 arboard = "3"

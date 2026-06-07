@@ -1,10 +1,15 @@
 package dev.captureport.app
 
 import android.app.Application
+import android.util.Log
+import androidx.core.content.ContextCompat
 import dev.captureport.app.data.datastore.PairedDevicesRepository
 import dev.captureport.app.network.WsClient
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 
 import dev.captureport.app.network.UdpDiscoveryListener
 import kotlinx.coroutines.flow.asStateFlow
@@ -18,6 +23,57 @@ enum class ReceiverConnectionMode(val label: String) {
     LocalOnly("Local only"),
     LocalThenInternet("Through internet"),
     InternetOnly("Internet only")
+}
+
+internal fun isBackgroundModeReady(
+    policy: CameraCapturePolicy,
+    cameraPermissionGranted: Boolean,
+    microphonePermissionGranted: Boolean,
+    notificationsGranted: Boolean,
+    isBackgroundCameraArmed: Boolean,
+    isBackgroundMicrophoneArmed: Boolean
+): Boolean {
+    if (policy != CameraCapturePolicy.Background) return true
+    return cameraPermissionGranted &&
+        microphonePermissionGranted &&
+        notificationsGranted &&
+        isBackgroundCameraArmed &&
+        isBackgroundMicrophoneArmed
+}
+
+internal fun shouldShowXiaomiAutostartHint(
+    manufacturer: String,
+    display: String
+): Boolean {
+    val manufacturerText = manufacturer.lowercase()
+    val displayText = display.lowercase()
+    return manufacturerText.contains("xiaomi") ||
+        manufacturerText.contains("poco") ||
+        displayText.contains("hyperos") ||
+        displayText.contains("miui")
+}
+
+internal fun isRemoteCameraCaptureAllowed(
+    policy: CameraCapturePolicy,
+    isCameraScreenVisible: Boolean,
+    isBackgroundCameraArmed: Boolean
+): Boolean {
+    return isCameraScreenVisible ||
+        (policy == CameraCapturePolicy.Background && isBackgroundCameraArmed)
+}
+
+internal fun isRemoteVideoCaptureAllowed(
+    policy: CameraCapturePolicy,
+    isCameraScreenVisible: Boolean,
+    isBackgroundCameraArmed: Boolean,
+    isBackgroundMicrophoneArmed: Boolean
+): Boolean {
+    return isCameraScreenVisible ||
+        (
+            policy == CameraCapturePolicy.Background &&
+                isBackgroundCameraArmed &&
+                isBackgroundMicrophoneArmed
+        )
 }
 
 class CapturePortApp : Application() {
@@ -50,13 +106,123 @@ class CapturePortApp : Application() {
         get() = _isActivityVisible.value
         set(value) { _isActivityVisible.value = value }
     val isActivityVisibleFlow = _isActivityVisible.asStateFlow()
+
+    private val _isBackgroundCameraArmed = kotlinx.coroutines.flow.MutableStateFlow(false)
+    var isBackgroundCameraArmed: Boolean
+        get() = _isBackgroundCameraArmed.value
+        set(value) { _isBackgroundCameraArmed.value = value }
+    val isBackgroundCameraArmedFlow = _isBackgroundCameraArmed.asStateFlow()
+
+    private val _isBackgroundMicrophoneArmed = kotlinx.coroutines.flow.MutableStateFlow(false)
+    var isBackgroundMicrophoneArmed: Boolean
+        get() = _isBackgroundMicrophoneArmed.value
+        set(value) { _isBackgroundMicrophoneArmed.value = value }
+    val isBackgroundMicrophoneArmedFlow = _isBackgroundMicrophoneArmed.asStateFlow()
     
     lateinit var cameraController: dev.captureport.app.camera.CameraController
         private set
 
     fun canServeRemoteCameraCapture(): Boolean {
-        return (cameraCapturePolicy == CameraCapturePolicy.Background) ||
-               (cameraCapturePolicy == CameraCapturePolicy.ScreenOnly && isCameraScreenVisible)
+        return hasCameraCapturePermission() &&
+            isRemoteCameraCaptureAllowed(
+                cameraCapturePolicy,
+                isCameraScreenVisible,
+                isBackgroundCameraArmed
+            )
+    }
+
+    fun canServeRemoteVideoCapture(): Boolean {
+        return hasCameraCapturePermission() &&
+            hasAudioCapturePermission() &&
+            isRemoteVideoCaptureAllowed(
+                cameraCapturePolicy,
+                isCameraScreenVisible,
+                isBackgroundCameraArmed,
+                isBackgroundMicrophoneArmed
+            )
+    }
+
+    fun hasCameraCapturePermission(): Boolean {
+        return ContextCompat.checkSelfPermission(
+            this,
+            android.Manifest.permission.CAMERA
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+    }
+
+    fun hasAudioCapturePermission(): Boolean {
+        return ContextCompat.checkSelfPermission(
+            this,
+            android.Manifest.permission.RECORD_AUDIO
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+    }
+
+    fun ensureWsClient(): WsClient {
+        wsClient?.let { return it }
+        return synchronized(this) {
+            wsClient ?: WsClient(
+                context = applicationContext,
+                scope = applicationScope,
+                onCaptureRequest = { onPhotoSnapped, onCaptureRejected ->
+                    applicationScope.launch(Dispatchers.Main) {
+                        val activeCam = cameraController
+                        if (canServeRemoteCameraCapture()) {
+                            activeCam.takePhoto(
+                                onSuccess = { file -> onPhotoSnapped(file) },
+                                onError = { err ->
+                                    Log.e("CapturePortApp", "MCP photo snap failed: ${err.message}")
+                                    onCaptureRejected("camera capture failed")
+                                }
+                            )
+                        } else {
+                            Log.w("CapturePortApp", "Remote camera capture rejected: camera unavailable")
+                            onCaptureRejected("camera unavailable under current capture policy or permissions")
+                        }
+                    }
+                }
+            ).also { wsClient = it }
+        }
+    }
+
+    fun reconnectToDevice(device: dev.captureport.app.data.PairedDevice, startService: Boolean = true) {
+        ensureWsClient().connect(device)
+        if (startService) {
+            val intent = android.content.Intent(this, dev.captureport.app.service.CapturePortService::class.java).apply {
+                action = dev.captureport.app.service.CapturePortService.ACTION_START
+            }
+            ContextCompat.startForegroundService(this, intent)
+        }
+    }
+
+    fun reconnectToSelectedDevice(startService: Boolean = true) {
+        applicationScope.launch(Dispatchers.IO) {
+            val device = pairedDevicesRepository.selectedDeviceFlow.first()
+            if (device != null) {
+                reconnectToDevice(device, startService)
+            }
+        }
+    }
+
+    fun ensureSelectedDeviceConnection(startService: Boolean = true) {
+        applicationScope.launch(Dispatchers.IO) {
+            val state = wsClient?.connectionState?.value.orEmpty()
+            if (WsClient.isConnectionLoopActive(state)) {
+                return@launch
+            }
+            val device = pairedDevicesRepository.selectedDeviceFlow.first()
+            if (device != null) {
+                reconnectToDevice(device, startService)
+            }
+        }
+    }
+
+    fun disconnectFromReceiver(stopService: Boolean = true) {
+        wsClient?.disconnect()
+        if (stopService) {
+            val intent = android.content.Intent(this, dev.captureport.app.service.CapturePortService::class.java).apply {
+                action = dev.captureport.app.service.CapturePortService.ACTION_STOP
+            }
+            stopService(intent)
+        }
     }
 
     fun updateBackgroundService() {

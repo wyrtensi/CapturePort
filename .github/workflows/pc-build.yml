@@ -177,6 +177,19 @@ jobs:
         working-directory: pc
         run: npm ci
 
+      - name: Build universal macOS MCP sidecar
+        if: matrix.platform == 'macos-latest'
+        working-directory: pc/src-tauri
+        run: |
+          cargo build --release --bin captureport-mcp --target aarch64-apple-darwin
+          cargo build --release --bin captureport-mcp --target x86_64-apple-darwin
+          mkdir -p target/universal-apple-darwin/release
+          lipo -create \
+            target/aarch64-apple-darwin/release/captureport-mcp \
+            target/x86_64-apple-darwin/release/captureport-mcp \
+            -output target/universal-apple-darwin/release/captureport-mcp
+          chmod +x target/universal-apple-darwin/release/captureport-mcp
+
       - name: Build Tauri App
         if: needs.prepare-release.outputs.release-id == ''
         uses: tauri-apps/tauri-action@v0
