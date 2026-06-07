@@ -6,6 +6,8 @@
   import packageJson from "../../package.json";
 
   const appVersion = packageJson.version;
+  const repoUrl = "https://github.com/wyrtensi/CapturePort";
+  const latestReleaseUrl = `${repoUrl}/releases/latest`;
 
   type WindowView = "main" | "history" | "pairing" | "settings";
 
@@ -60,6 +62,8 @@
   let mcpIntegrationStatus = $state<any[]>([]);
   let mcpIntegrationBusy = $state("");
   let mcpIntegrationMessage = $state("");
+  let latestAppVersion = $state("");
+  let versionCheckStatus = $state<"idle" | "checking" | "current" | "update" | "unknown">("idle");
 
   // Custom Confirmation Modal State
   let showConfirmModal = $state(false);
@@ -213,6 +217,37 @@
     } catch (e) {}
   }
 
+  function normalizeVersionTag(version: string) {
+    return version.trim().replace(/^v/i, "");
+  }
+
+  function compareVersions(left: string, right: string) {
+    const leftParts = normalizeVersionTag(left).split(".").map((part) => Number.parseInt(part, 10) || 0);
+    const rightParts = normalizeVersionTag(right).split(".").map((part) => Number.parseInt(part, 10) || 0);
+    const maxLen = Math.max(leftParts.length, rightParts.length);
+    for (let i = 0; i < maxLen; i += 1) {
+      const diff = (leftParts[i] || 0) - (rightParts[i] || 0);
+      if (diff !== 0) return diff;
+    }
+    return 0;
+  }
+
+  async function checkLatestReleaseVersion() {
+    if (versionCheckStatus === "checking") return;
+    versionCheckStatus = "checking";
+    try {
+      const response = await fetch("https://api.github.com/repos/wyrtensi/CapturePort/releases/latest", {
+        headers: { "Accept": "application/vnd.github+json" }
+      });
+      if (!response.ok) throw new Error(`GitHub release check failed: ${response.status}`);
+      const release = await response.json();
+      latestAppVersion = normalizeVersionTag(release.tag_name || "");
+      versionCheckStatus = latestAppVersion && compareVersions(appVersion, latestAppVersion) < 0 ? "update" : "current";
+    } catch (e) {
+      versionCheckStatus = "unknown";
+    }
+  }
+
   async function loadMcpIntegrationStatus() {
     try {
       mcpIntegrationStatus = await invoke("get_mcp_integration_status");
@@ -309,6 +344,7 @@
 
       await loadView(initialView);
       await loadPairedDevices();
+      void checkLatestReleaseVersion();
       await waitForStyles();
       setTimeout(() => {
         appReady = true;
@@ -446,6 +482,11 @@
       await invoke("open_media_file", { path });
     } catch (e) {}
   }
+
+  function mediaPreviewSrc(item: any) {
+    const data = item.base64_data || item.thumbnail_base64;
+    return data ? `data:image/jpeg;base64,${data}` : "";
+  }
 </script>
 
 <main class="app-container theme-dark">
@@ -557,7 +598,35 @@
         </div>
       </div>
 
-      <div class="sidebar-version">v{appVersion}</div>
+      <div class="sidebar-meta" aria-label="Application metadata">
+        <a
+          class={`sidebar-version ${versionCheckStatus === "update" ? "version-update" : ""}`}
+          href={latestReleaseUrl}
+          target="_blank"
+          rel="noreferrer"
+          title={versionCheckStatus === "update" && latestAppVersion ? `Update available: v${latestAppVersion}` : "Open latest CapturePort release"}
+          aria-label={versionCheckStatus === "update" && latestAppVersion ? `Update available: version ${latestAppVersion}` : "Open latest CapturePort release"}
+        >
+          v{appVersion}
+          {#if versionCheckStatus === "update" && latestAppVersion}
+            <span class="version-status">v{latestAppVersion}</span>
+          {:else if versionCheckStatus === "current"}
+            <span class="version-status">current</span>
+          {/if}
+        </a>
+        <a
+          class="sidebar-github-link"
+          href={repoUrl}
+          target="_blank"
+          rel="noreferrer"
+          title="Open CapturePort on GitHub"
+          aria-label="Open CapturePort repository on GitHub"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path fill="currentColor" d="M12 .5a12 12 0 0 0-3.79 23.39c.6.11.82-.26.82-.58v-2.1c-3.34.73-4.04-1.42-4.04-1.42-.55-1.39-1.34-1.76-1.34-1.76-1.09-.75.08-.74.08-.74 1.21.09 1.85 1.25 1.85 1.25 1.07 1.83 2.81 1.3 3.5.99.11-.78.42-1.3.76-1.6-2.67-.31-5.47-1.34-5.47-5.94 0-1.31.47-2.39 1.24-3.23-.12-.31-.54-1.54.12-3.19 0 0 1.01-.32 3.3 1.23a11.5 11.5 0 0 1 6 0c2.29-1.55 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.19.77.84 1.24 1.92 1.24 3.23 0 4.62-2.81 5.63-5.49 5.93.43.38.82 1.11.82 2.24v3.33c0 .32.22.69.83.57A12 12 0 0 0 12 .5Z" />
+          </svg>
+        </a>
+      </div>
     </nav>
 
     <section class="content-area" class:content-area-centered={windowLabel === "pairing"}>
@@ -584,7 +653,19 @@
               <button class="media-card" onclick={() => openMediaFile(item.path)}>
                 <div class="media-preview-container">
                   {#if item.kind === 'photo'}
-                    <img src="data:image/jpeg;base64,{item.base64_data}" class="media-preview" alt="Captured view" />
+                    {#if mediaPreviewSrc(item)}
+                      <img src={mediaPreviewSrc(item)} class="media-preview" alt="Captured view" />
+                    {:else}
+                      <div class="photo-preview-fallback">
+                        <span class="play-icon" aria-hidden="true">
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M5 8.5A2.5 2.5 0 0 1 7.5 6h2l1.2-1.5h2.6L14.5 6h2A2.5 2.5 0 0 1 19 8.5v7A2.5 2.5 0 0 1 16.5 18h-9A2.5 2.5 0 0 1 5 15.5z" />
+                            <circle cx="12" cy="12" r="3" />
+                          </svg>
+                        </span>
+                        <span class="video-badge">PHOTO</span>
+                      </div>
+                    {/if}
                   {:else}
                     <div class="video-preview-fallback">
                       <span class="play-icon" aria-hidden="true">
@@ -788,17 +869,26 @@
 
                   <div class="form-group checkbox-group">
                     <input id="mcp-enabled" type="checkbox" bind:checked={settings.mcpEnabled} />
-                    <label for="mcp-enabled">Enable MCP Camera Server for AI agents</label>
+                    <div class="checkbox-copy">
+                      <label for="mcp-enabled">Enable MCP Camera Server for AI agents</label>
+                      <p>Allows local editors and agents to use paired phones for camera, clipboard, and media tools.</p>
+                    </div>
                   </div>
 
                   <div class="form-group checkbox-group">
                     <input id="auto-start" type="checkbox" bind:checked={settings.autoStart} />
-                    <label for="auto-start">Launch automatically on system startup</label>
+                    <div class="checkbox-copy">
+                      <label for="auto-start">Launch automatically on system startup</label>
+                      <p>Starts CapturePort when Windows signs in, so phone pairing and MCP tools are ready sooner.</p>
+                    </div>
                   </div>
 
                   <div class="form-group checkbox-group">
                     <input id="close-to-tray" type="checkbox" bind:checked={settings.closeToTray} />
-                    <label for="close-to-tray">Minimize to system tray instead of exiting on window close</label>
+                    <div class="checkbox-copy">
+                      <label for="close-to-tray">Minimize to system tray instead of exiting on window close</label>
+                      <p>Keeps background receiving, discovery, and MCP available after closing the main window.</p>
+                    </div>
                   </div>
                 {:else if settingsTab === "network"}
                   <div class="form-group">
@@ -817,7 +907,10 @@
                   </div>
                   <div class="form-group checkbox-group">
                     <input id="external-enabled" type="checkbox" bind:checked={settings.externalEnabled} />
-                    <label for="external-enabled">Enable internet endpoint in QR codes</label>
+                    <div class="checkbox-copy">
+                      <label for="external-enabled">Enable internet endpoint in QR codes</label>
+                      <p>Adds the configured public host to pairing QR codes for phones outside the local network.</p>
+                    </div>
                   </div>
                   <div class="form-group">
                     <label for="external-host">External Host / DDNS</label>
@@ -851,12 +944,18 @@
 
                   <div class="form-group checkbox-group">
                     <input id="mcp-http-enabled" type="checkbox" bind:checked={settings.mcpHttpEnabled} />
-                    <label for="mcp-http-enabled">Enable MCP Streamable HTTP server</label>
+                    <div class="checkbox-copy">
+                      <label for="mcp-http-enabled">Enable MCP Streamable HTTP server</label>
+                      <p>Runs the HTTP MCP endpoint used by modern local agents and IDEs.</p>
+                    </div>
                   </div>
 
                   <div class="form-group checkbox-group">
                     <input id="mcp-discovery-enabled" type="checkbox" bind:checked={settings.mcpHttpDiscoveryEnabled} />
-                    <label for="mcp-discovery-enabled">Advertise MCP over local network discovery</label>
+                    <div class="checkbox-copy">
+                      <label for="mcp-discovery-enabled">Advertise MCP over local network discovery</label>
+                      <p>Publishes CapturePort on the LAN so compatible clients can find it without manual setup.</p>
+                    </div>
                   </div>
 
                   <div class="form-group">
@@ -890,26 +989,39 @@
                       <option value="adaptive">Adaptive request/response</option>
                       <option value="stream">Stream resources when supported</option>
                     </select>
+                    <p class="field-hint">Adaptive is best for broad compatibility; stream mode favors clients that can consume resource updates progressively.</p>
                   </div>
 
                   <div class="form-group checkbox-group">
                     <input id="mcp-media-index" type="checkbox" bind:checked={settings.mcpMediaIndexEnabled} />
-                    <label for="mcp-media-index">Expose received media history to MCP</label>
+                    <div class="checkbox-copy">
+                      <label for="mcp-media-index">Expose received media history to MCP</label>
+                      <p>Lets agents list and inspect photos already sent from paired devices.</p>
+                    </div>
                   </div>
 
                   <div class="form-group checkbox-group">
                     <input id="mcp-resource-reads" type="checkbox" bind:checked={settings.mcpResourceReadsEnabled} />
-                    <label for="mcp-resource-reads">Allow MCP resource reads for photos and thumbnails</label>
+                    <div class="checkbox-copy">
+                      <label for="mcp-resource-reads">Allow MCP resource reads for photos and thumbnails</label>
+                      <p>Allows MCP clients to read indexed media resources instead of only seeing metadata.</p>
+                    </div>
                   </div>
 
                   <div class="form-group checkbox-group">
                     <input id="mcp-inline-images" type="checkbox" bind:checked={settings.mcpInlineImagesEnabled} />
-                    <label for="mcp-inline-images">Return inline image content when clients support it</label>
+                    <div class="checkbox-copy">
+                      <label for="mcp-inline-images">Return inline image content when clients support it</label>
+                      <p>Includes image payloads directly in tool results for vision-capable clients.</p>
+                    </div>
                   </div>
 
                   <div class="form-group checkbox-group">
                     <input id="mcp-stream-enabled" type="checkbox" bind:checked={settings.mcpStreamEnabled} />
-                    <label for="mcp-stream-enabled">Opt into streaming-oriented MCP behavior</label>
+                    <div class="checkbox-copy">
+                      <label for="mcp-stream-enabled">Opt into streaming-oriented MCP behavior</label>
+                      <p>Enables experimental stream-friendly behavior for clients that can consume updates.</p>
+                    </div>
                   </div>
 
                   <div class="form-group">
@@ -1147,9 +1259,9 @@
 
   .pairing-columns {
     display: grid;
-    grid-template-columns: minmax(330px, 1fr) minmax(330px, 1fr);
+    grid-template-columns: minmax(310px, 0.94fr) minmax(350px, 1.06fr);
     gap: 20px;
-    max-width: 820px;
+    max-width: 860px;
     width: 100%;
     height: min(100%, 592px);
     align-items: stretch;
@@ -1184,6 +1296,7 @@
   .pairing-details-panel {
     align-items: stretch;
     min-height: 0;
+    gap: 14px;
   }
 
   .pairing-details-panel > .connection-details-card {
@@ -1268,15 +1381,15 @@
   }
 
   .qr-polaroid:hover {
-    transform: translateY(-2px);
     border-color: rgba(255, 255, 255, 0.12);
+    background: rgba(255, 255, 255, 0.03);
     box-shadow: 
-      0 22px 44px rgba(0, 0, 0, 0.5),
+      0 18px 38px rgba(0, 0, 0, 0.42),
       inset 0 1px 2px rgba(255, 255, 255, 0.08);
   }
 
   .qr-polaroid:active {
-    transform: scale(0.98) translateY(-1px);
+    transform: scale(0.99);
   }
 
   .qr-photo-area {
@@ -1399,8 +1512,8 @@
     padding: 18px;
     display: flex;
     flex-direction: column;
-    gap: 16px;
-    margin-bottom: 18px;
+    gap: 14px;
+    margin-bottom: 0;
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
   }
 
@@ -1556,7 +1669,7 @@
   }
 
   .pairing-warning {
-    margin: 0 0 16px 0;
+    margin: 0;
     padding: 12px 18px;
     background: rgba(255, 92, 92, 0.04);
     border: 1px solid rgba(255, 92, 92, 0.15);
@@ -1619,7 +1732,7 @@
     justify-content: center;
     width: 100%;
     margin-top: auto;
-    padding-top: 12px;
+    padding-top: 2px;
   }
 
   .status-indicator {
@@ -1993,12 +2106,17 @@
     transform: scale(1.05);
   }
 
+  .photo-preview-fallback,
   .video-preview-fallback {
     display: flex;
     flex-direction: column;
     align-items: center;
     gap: 8px;
     color: #A4B4FF;
+  }
+
+  .photo-preview-fallback {
+    color: #DEE0FF;
   }
 
   .play-icon {
@@ -2204,7 +2322,7 @@
 
   .checkbox-group {
     flex-direction: row;
-    align-items: center;
+    align-items: flex-start;
     gap: 10px;
     margin-top: 4px;
     cursor: pointer;
@@ -2213,8 +2331,10 @@
   .checkbox-group input[type="checkbox"] {
     width: 18px;
     height: 18px;
+    margin-top: 2px;
     accent-color: #3B5BFF;
     cursor: pointer;
+    flex-shrink: 0;
   }
 
   .checkbox-group label {
@@ -2222,6 +2342,21 @@
     color: #C5C4DD;
     cursor: pointer;
     user-select: none;
+  }
+
+  .checkbox-copy {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .checkbox-copy p {
+    margin: 0;
+    color: #8C8E96;
+    font-size: 11px;
+    line-height: 1.45;
+    cursor: default;
   }
 
   .submit-btn {
@@ -2883,6 +3018,70 @@
     padding: 16px 8px;
     border: 1px dashed rgba(255, 255, 255, 0.03);
     border-radius: 8px;
+  }
+
+  .sidebar-meta {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 12px 4px 0;
+    margin-top: 12px;
+    flex-shrink: 0;
+  }
+
+  .sidebar-version {
+    display: inline-flex;
+    min-width: 0;
+    align-items: center;
+    gap: 6px;
+    color: #6F7280;
+    font-size: 10px;
+    font-weight: 700;
+    text-decoration: none;
+    user-select: none;
+    -webkit-user-select: none;
+    transition: color 0.2s ease;
+  }
+
+  .sidebar-version:hover,
+  .sidebar-version.version-update {
+    color: #A4B4FF;
+  }
+
+  .version-status {
+    max-width: 76px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: inherit;
+    opacity: 0.72;
+    font-size: 9px;
+    font-weight: 700;
+  }
+
+  .sidebar-github-link {
+    width: 20px;
+    height: 20px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: #6F7280;
+    border-radius: 8px;
+    text-decoration: none;
+    user-select: none;
+    -webkit-user-select: none;
+    transition: color 0.2s ease, background 0.2s ease;
+  }
+
+  .sidebar-github-link:hover {
+    color: #DEE0FF;
+    background: rgba(255, 255, 255, 0.05);
+  }
+
+  .sidebar-github-link svg {
+    width: 15px;
+    height: 15px;
   }
 
   /* Compact switch toggle */

@@ -74,12 +74,19 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.net.HttpURLConnection
+import java.net.URL
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import org.json.JSONObject
 
 enum class RotationLockMode {
     AUTO, PORTRAIT, LANDSCAPE
 }
+
+private const val RECEIVER_PREFS = "receiver_preferences"
+private const val KEY_HIDE_PAIRED_PCS = "hide_paired_pcs"
+private const val LATEST_RELEASE_URL = "https://github.com/wyrtensi/CapturePort/releases/latest"
 
 private fun appVersionName(context: Context): String {
     return runCatching {
@@ -93,6 +100,66 @@ private fun appVersionName(context: Context): String {
             context.packageManager.getPackageInfo(context.packageName, 0).versionName
         }
     }.getOrNull().orEmpty()
+}
+
+private fun loadHidePairedPcs(context: Context): Boolean {
+    return context.getSharedPreferences(RECEIVER_PREFS, Context.MODE_PRIVATE)
+        .getBoolean(KEY_HIDE_PAIRED_PCS, false)
+}
+
+private fun saveHidePairedPcs(context: Context, hidden: Boolean) {
+    context.getSharedPreferences(RECEIVER_PREFS, Context.MODE_PRIVATE)
+        .edit()
+        .putBoolean(KEY_HIDE_PAIRED_PCS, hidden)
+        .apply()
+}
+
+private fun normalizeVersionTag(version: String): String {
+    return version.trim().removePrefix("v").removePrefix("V")
+}
+
+private fun compareVersionTags(left: String, right: String): Int {
+    val leftParts = normalizeVersionTag(left).split(".").map { it.toIntOrNull() ?: 0 }
+    val rightParts = normalizeVersionTag(right).split(".").map { it.toIntOrNull() ?: 0 }
+    val maxSize = maxOf(leftParts.size, rightParts.size)
+    for (index in 0 until maxSize) {
+        val diff = (leftParts.getOrNull(index) ?: 0) - (rightParts.getOrNull(index) ?: 0)
+        if (diff != 0) return diff
+    }
+    return 0
+}
+
+private fun versionStatusText(current: String, latest: String?): String {
+    val latestVersion = latest?.takeIf { it.isNotBlank() } ?: return "v$current"
+    return if (compareVersionTags(current, latestVersion) < 0) {
+        "v$current · update v$latestVersion"
+    } else {
+        "v$current · current"
+    }
+}
+
+private suspend fun fetchLatestReleaseVersion(): String? = withContext(Dispatchers.IO) {
+    runCatching {
+        val connection = (URL("https://api.github.com/repos/wyrtensi/CapturePort/releases/latest").openConnection() as HttpURLConnection).apply {
+            connectTimeout = 4000
+            readTimeout = 4000
+            requestMethod = "GET"
+            setRequestProperty("Accept", "application/vnd.github+json")
+            setRequestProperty("User-Agent", "CapturePort-Android")
+        }
+        connection.inputStream.bufferedReader().use { reader ->
+            normalizeVersionTag(JSONObject(reader.readText()).optString("tag_name"))
+        }.also {
+            connection.disconnect()
+        }
+    }.getOrNull()
+}
+
+private fun openLatestRelease(context: Context) {
+    context.startActivity(
+        Intent(Intent.ACTION_VIEW, Uri.parse(LATEST_RELEASE_URL))
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    )
 }
 
 private fun shouldShowReceiverXiaomiAutostartHint(
@@ -125,6 +192,7 @@ fun ReceiversScreen(
     val connectionState by (app.wsClient?.connectionState?.collectAsState() ?: remember { mutableStateOf("Disconnected") })
 
     val cameraController = remember { app.cameraController }
+    val torchEnabled by cameraController.torchEnabledFlow.collectAsState()
     
     var isRecording by remember { mutableStateOf(false) }
     var recordingDuration by rememberSaveable { mutableStateOf(0) }
@@ -137,6 +205,8 @@ fun ReceiversScreen(
     val isXiaomiDevice = remember {
         shouldShowReceiverXiaomiAutostartHint(Build.MANUFACTURER, Build.DISPLAY)
     }
+    var hidePairedPcs by rememberSaveable { mutableStateOf(loadHidePairedPcs(context)) }
+    var latestAppVersion by rememberSaveable { mutableStateOf<String?>(null) }
 
     var rotationLockMode by rememberSaveable { mutableStateOf(RotationLockMode.AUTO) }
     var physicalRotation by remember { mutableStateOf(0) }
@@ -284,6 +354,10 @@ fun ReceiversScreen(
             restore = { list -> mutableStateMapOf<String, Boolean>().apply { list.forEach { put(it.first, it.second) } } }
         )
     ) { mutableStateMapOf<String, Boolean>() }
+
+    LaunchedEffect(appVersion) {
+        latestAppVersion = fetchLatestReleaseVersion()
+    }
 
     val galleryLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
@@ -435,6 +509,11 @@ fun ReceiversScreen(
         selectedDevice?.let { app.reconnectToDevice(it) }
     }
 
+    fun updateHidePairedPcs(hidden: Boolean) {
+        hidePairedPcs = hidden
+        saveHidePairedPcs(context, hidden)
+    }
+
     fun requestBackgroundReadinessPermissions() {
         val missing = missingPermissions(backgroundCameraPermissions())
         if (missing.isNotEmpty()) {
@@ -522,18 +601,20 @@ fun ReceiversScreen(
                     .padding(16.dp)
                     .fillMaxWidth()
             ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(start = 4.dp, bottom = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Text(
-                        text = "Paired PC Receivers",
-                        color = Color(0xFFDEE0FF), fontSize = 12.sp, fontWeight = FontWeight.Bold
-                    )
-                    Spacer(modifier = Modifier.weight(1f))
+                if (pairedDevices.isEmpty() || !hidePairedPcs) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 4.dp, bottom = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = "Paired PC Receivers",
+                            color = Color(0xFFDEE0FF), fontSize = 12.sp, fontWeight = FontWeight.Bold
+                        )
+                        Spacer(modifier = Modifier.weight(1f))
+                    }
                 }
 
                 if (pairedDevices.isEmpty()) {
@@ -576,7 +657,7 @@ fun ReceiversScreen(
                             )
                         }
                     }
-                } else {
+                } else if (!hidePairedPcs) {
                     val receiverRowState = rememberLazyListState()
                     Box(modifier = Modifier.fillMaxWidth()) {
                         LazyRow(
@@ -645,7 +726,7 @@ fun ReceiversScreen(
                                                 modifier = Modifier.size(20.dp)
                                             ) {
                                                 Icon(
-                                                    imageVector = if (isCollapsed) Icons.Default.KeyboardArrowDown else Icons.Default.KeyboardArrowUp,
+                                                    imageVector = if (isCollapsed) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
                                                     contentDescription = if (isCollapsed) "Expand card" else "Collapse card",
                                                     tint = Color(0xFF8C8E96),
                                                     modifier = Modifier.size(16.dp)
@@ -901,6 +982,7 @@ fun ReceiversScreen(
             ) {
                 if (isLandscape) {
                     LandscapeSettingsMenu(
+                        pairedDevices = pairedDevices,
                         selectedDevice = selectedDevice,
                         connectionState = connectionState,
                         currentPolicy = currentPolicy,
@@ -919,7 +1001,11 @@ fun ReceiversScreen(
                         onRequestReadinessPermissions = { requestBackgroundReadinessPermissions() },
                         onOpenBatterySettings = { openBatterySettings() },
                         onOpenXiaomiAutostartSettings = { openXiaomiAutostartSettings() },
+                        hidePairedPcs = hidePairedPcs,
+                        onHidePairedPcsChange = { updateHidePairedPcs(it) },
                         appVersion = appVersion,
+                        latestAppVersion = latestAppVersion,
+                        onOpenLatestRelease = { openLatestRelease(context) },
                         onNavigateToPairing = {
                             showSettingsMenu = false
                             onNavigateToPairing()
@@ -927,6 +1013,7 @@ fun ReceiversScreen(
                     )
                 } else {
                     PortraitSettingsMenu(
+                        pairedDevices = pairedDevices,
                         selectedDevice = selectedDevice,
                         connectionState = connectionState,
                         currentPolicy = currentPolicy,
@@ -945,7 +1032,11 @@ fun ReceiversScreen(
                         onRequestReadinessPermissions = { requestBackgroundReadinessPermissions() },
                         onOpenBatterySettings = { openBatterySettings() },
                         onOpenXiaomiAutostartSettings = { openXiaomiAutostartSettings() },
+                        hidePairedPcs = hidePairedPcs,
+                        onHidePairedPcsChange = { updateHidePairedPcs(it) },
                         appVersion = appVersion,
+                        latestAppVersion = latestAppVersion,
+                        onOpenLatestRelease = { openLatestRelease(context) },
                         onNavigateToPairing = {
                             showSettingsMenu = false
                             onNavigateToPairing()
@@ -967,18 +1058,40 @@ fun ReceiversScreen(
                 enter = fadeIn(animationSpec = tween(180)),
                 exit = fadeOut(animationSpec = tween(120))
             ) {
-                IconButton(
-                    onClick = { cameraController.toggleCamera() },
-                    modifier = Modifier.size(40.dp)
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(
-                        imageVector = CameraswitchIcon,
-                        contentDescription = "Switch camera",
-                        tint = Color.White,
-                        modifier = Modifier
-                            .size(20.dp)
-                            .rotate(iconRotation)
-                    )
+                    IconButton(
+                        onClick = { cameraController.toggleCamera() },
+                        modifier = Modifier.size(40.dp)
+                    ) {
+                        Icon(
+                            imageVector = CameraswitchIcon,
+                            contentDescription = "Switch camera",
+                            tint = Color.White,
+                            modifier = Modifier
+                                .size(20.dp)
+                                .rotate(iconRotation)
+                        )
+                    }
+                    IconButton(
+                        onClick = {
+                            if (!cameraController.toggleTorch()) {
+                                Toast.makeText(context, "Flashlight unavailable on this camera", Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        modifier = Modifier.size(40.dp)
+                    ) {
+                        Icon(
+                            imageVector = FlashlightIcon,
+                            contentDescription = if (torchEnabled) "Turn flashlight off" else "Turn flashlight on",
+                            tint = if (torchEnabled) Color(0xFFFFD54F) else Color.White,
+                            modifier = Modifier
+                                .size(19.dp)
+                                .rotate(iconRotation)
+                        )
+                    }
                 }
             }
 
@@ -1380,6 +1493,8 @@ private fun BackgroundReadinessSection(
     isBackgroundCameraArmed: Boolean,
     isBackgroundMicrophoneArmed: Boolean,
     isXiaomiDevice: Boolean,
+    expanded: Boolean,
+    onExpandedChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
     isLandscape: Boolean = false,
     onRequestPermissions: () -> Unit,
@@ -1397,45 +1512,97 @@ private fun BackgroundReadinessSection(
         isLandscape = isLandscape,
         modifier = modifier
     ) {
-        ReadinessChecklistRow(
-            label = "Camera permission",
-            ready = cameraPermissionGranted,
-            isLandscape = isLandscape,
-            actionLabel = "Allow",
-            onAction = onRequestPermissions
-        )
-        ReadinessChecklistRow(
-            label = "Microphone permission",
-            ready = microphonePermissionGranted,
-            isLandscape = isLandscape,
-            actionLabel = "Allow",
-            onAction = onRequestPermissions
-        )
-        ReadinessChecklistRow(
-            label = "Notifications",
-            ready = notificationsGranted,
-            isLandscape = isLandscape,
-            actionLabel = "Allow",
-            onAction = onRequestPermissions
-        )
-        ReadinessChecklistRow(
-            label = "Battery unrestricted",
-            ready = batteryUnrestricted,
-            isLandscape = isLandscape,
-            actionLabel = "Open",
-            onAction = onOpenBatterySettings
-        )
-        ReadinessChecklistRow(
-            label = "Camera service armed",
-            ready = !backgroundSelected || isBackgroundCameraArmed,
-            isLandscape = isLandscape
-        )
-        ReadinessChecklistRow(
-            label = "Microphone service armed",
-            ready = !backgroundSelected || isBackgroundMicrophoneArmed,
-            isLandscape = isLandscape
-        )
-        if (isXiaomiDevice) {
+        val readyCount = listOf(
+            cameraPermissionGranted,
+            microphonePermissionGranted,
+            notificationsGranted,
+            batteryUnrestricted,
+            !backgroundSelected || isBackgroundCameraArmed,
+            !backgroundSelected || isBackgroundMicrophoneArmed
+        ).count { it }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = if (isLandscape) 5.dp else 7.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(Color(0x18101114))
+                .clickable { onExpandedChange(!expanded) }
+                .padding(horizontal = if (isLandscape) 8.dp else 10.dp, vertical = if (isLandscape) 6.dp else 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "Permissions",
+                color = Color.White.copy(alpha = 0.86f),
+                fontSize = if (isLandscape) 10.sp else 11.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.weight(1f)
+            )
+            Text(
+                text = "$readyCount/6",
+                color = Color(0xFFA4B4FF),
+                fontSize = if (isLandscape) 9.sp else 10.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(modifier = Modifier.width(4.dp))
+            Icon(
+                imageVector = if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                contentDescription = if (expanded) "Hide permissions" else "Show permissions",
+                tint = Color(0xFFA4B4FF),
+                modifier = Modifier.size(if (isLandscape) 15.dp else 16.dp)
+            )
+        }
+        AnimatedVisibility(visible = expanded) {
+            Column(modifier = Modifier.padding(top = if (isLandscape) 4.dp else 6.dp)) {
+                ReadinessChecklistRow(
+                    label = "Camera permission",
+                    ready = cameraPermissionGranted,
+                    isLandscape = isLandscape,
+                    actionLabel = "Allow",
+                    onAction = onRequestPermissions
+                )
+                ReadinessChecklistRow(
+                    label = "Microphone permission",
+                    ready = microphonePermissionGranted,
+                    isLandscape = isLandscape,
+                    actionLabel = "Allow",
+                    onAction = onRequestPermissions
+                )
+                ReadinessChecklistRow(
+                    label = "Notifications",
+                    ready = notificationsGranted,
+                    isLandscape = isLandscape,
+                    actionLabel = "Allow",
+                    onAction = onRequestPermissions
+                )
+                ReadinessChecklistRow(
+                    label = "Battery unrestricted",
+                    ready = batteryUnrestricted,
+                    isLandscape = isLandscape,
+                    actionLabel = "Open",
+                    onAction = onOpenBatterySettings
+                )
+                ReadinessChecklistRow(
+                    label = "Camera service armed",
+                    ready = !backgroundSelected || isBackgroundCameraArmed,
+                    isLandscape = isLandscape
+                )
+                ReadinessChecklistRow(
+                    label = "Microphone service armed",
+                    ready = !backgroundSelected || isBackgroundMicrophoneArmed,
+                    isLandscape = isLandscape
+                )
+                if (isXiaomiDevice) {
+                    ReadinessChecklistRow(
+                        label = "Xiaomi autostart",
+                        ready = false,
+                        isLandscape = isLandscape,
+                        actionLabel = "Check",
+                        onAction = onOpenXiaomiAutostartSettings
+                    )
+                }
+            }
+        }
+        if (isXiaomiDevice && !expanded) {
             ReadinessChecklistRow(
                 label = "Xiaomi autostart",
                 ready = false,
@@ -1443,6 +1610,92 @@ private fun BackgroundReadinessSection(
                 actionLabel = "Check",
                 onAction = onOpenXiaomiAutostartSettings
             )
+        }
+    }
+}
+
+@Composable
+private fun PairedPcSettingsSection(
+    pairedDevices: List<PairedDevice>,
+    selectedDevice: PairedDevice?,
+    hidePairedPcs: Boolean,
+    onHidePairedPcsChange: (Boolean) -> Unit,
+    isLandscape: Boolean = false
+) {
+    SettingsSectionCard(
+        title = "Paired PCs",
+        caption = if (hidePairedPcs) {
+            "Receivers are hidden from the camera screen and shown here."
+        } else {
+            "Keep receiver cards visible on the camera screen."
+        },
+        isLandscape = isLandscape,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = if (isLandscape) 4.dp else 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "Hide paired PCs",
+                color = Color.White.copy(alpha = 0.86f),
+                fontSize = if (isLandscape) 10.sp else 11.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.weight(1f)
+            )
+            Switch(
+                checked = hidePairedPcs,
+                onCheckedChange = onHidePairedPcsChange,
+                modifier = Modifier.height(if (isLandscape) 28.dp else 32.dp)
+            )
+        }
+        if (hidePairedPcs) {
+            Spacer(modifier = Modifier.height(if (isLandscape) 4.dp else 6.dp))
+            if (pairedDevices.isEmpty()) {
+                Text(
+                    text = "No paired PCs yet",
+                    color = Color(0x8CFFFFFF),
+                    fontSize = if (isLandscape) 9.sp else 10.sp
+                )
+            } else {
+                pairedDevices.take(4).forEach { device ->
+                    val displayName = device.alias.ifBlank { device.name }
+                    val selected = selectedDevice?.id == device.id
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = if (isLandscape) 2.dp else 3.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(if (isLandscape) 5.dp else 6.dp)
+                                .clip(CircleShape)
+                                .background(if (selected) Color(0xFF4CAF50) else Color(0x4DFFFFFF))
+                        )
+                        Spacer(modifier = Modifier.width(7.dp))
+                        Text(
+                            text = displayName,
+                            color = Color.White.copy(alpha = if (selected) 0.95f else 0.72f),
+                            fontSize = if (isLandscape) 9.sp else 10.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+                val hiddenCount = pairedDevices.size - 4
+                if (hiddenCount > 0) {
+                    Text(
+                        text = "+$hiddenCount more",
+                        color = Color(0x8CFFFFFF),
+                        fontSize = if (isLandscape) 9.sp else 10.sp
+                    )
+                }
+            }
         }
     }
 }
@@ -1583,6 +1836,7 @@ private fun RotatedLayout(
 
 @Composable
 private fun PortraitSettingsMenu(
+    pairedDevices: List<PairedDevice>,
     selectedDevice: PairedDevice?,
     connectionState: String,
     currentPolicy: CameraCapturePolicy,
@@ -1601,9 +1855,14 @@ private fun PortraitSettingsMenu(
     onRequestReadinessPermissions: () -> Unit,
     onOpenBatterySettings: () -> Unit,
     onOpenXiaomiAutostartSettings: () -> Unit,
+    hidePairedPcs: Boolean,
+    onHidePairedPcsChange: (Boolean) -> Unit,
     appVersion: String,
+    latestAppVersion: String?,
+    onOpenLatestRelease: () -> Unit,
     onNavigateToPairing: () -> Unit
 ) {
+    var readinessExpanded by rememberSaveable { mutableStateOf(false) }
     Box(
         modifier = Modifier
             .widthIn(max = 340.dp)
@@ -1652,10 +1911,11 @@ private fun PortraitSettingsMenu(
                     )
                     if (appVersion.isNotBlank()) {
                         Text(
-                            text = "v$appVersion",
+                            text = versionStatusText(appVersion, latestAppVersion),
                             color = Color(0x66FFFFFF),
                             fontSize = 10.sp,
-                            maxLines = 1
+                            maxLines = 1,
+                            modifier = Modifier.clickable(onClick = onOpenLatestRelease)
                         )
                     }
                 }
@@ -1668,7 +1928,10 @@ private fun PortraitSettingsMenu(
             Spacer(modifier = Modifier.height(6.dp))
 
             // 1. Camera Capture
-            SettingsSectionCard(title = "Camera capture") {
+            SettingsSectionCard(
+                title = "Camera capture",
+                caption = "Choose whether remote photo and video capture works only on this screen or can use the armed background service."
+            ) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1697,9 +1960,20 @@ private fun PortraitSettingsMenu(
                 isBackgroundCameraArmed = isBackgroundCameraArmed,
                 isBackgroundMicrophoneArmed = isBackgroundMicrophoneArmed,
                 isXiaomiDevice = isXiaomiDevice,
+                expanded = readinessExpanded,
+                onExpandedChange = { readinessExpanded = it },
                 onRequestPermissions = onRequestReadinessPermissions,
                 onOpenBatterySettings = onOpenBatterySettings,
                 onOpenXiaomiAutostartSettings = onOpenXiaomiAutostartSettings
+            )
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            PairedPcSettingsSection(
+                pairedDevices = pairedDevices,
+                selectedDevice = selectedDevice,
+                hidePairedPcs = hidePairedPcs,
+                onHidePairedPcsChange = onHidePairedPcsChange
             )
 
             Spacer(modifier = Modifier.height(10.dp))
@@ -1824,6 +2098,7 @@ private fun PortraitSettingsMenu(
 
 @Composable
 private fun LandscapeSettingsMenu(
+    pairedDevices: List<PairedDevice>,
     selectedDevice: PairedDevice?,
     connectionState: String,
     currentPolicy: CameraCapturePolicy,
@@ -1842,9 +2117,14 @@ private fun LandscapeSettingsMenu(
     onRequestReadinessPermissions: () -> Unit,
     onOpenBatterySettings: () -> Unit,
     onOpenXiaomiAutostartSettings: () -> Unit,
+    hidePairedPcs: Boolean,
+    onHidePairedPcsChange: (Boolean) -> Unit,
     appVersion: String,
+    latestAppVersion: String?,
+    onOpenLatestRelease: () -> Unit,
     onNavigateToPairing: () -> Unit
 ) {
+    var readinessExpanded by rememberSaveable { mutableStateOf(false) }
     Box(
         modifier = Modifier
             .width(480.dp)
@@ -1905,13 +2185,22 @@ private fun LandscapeSettingsMenu(
                     )
                     if (appVersion.isNotBlank()) {
                         Text(
-                            text = "v$appVersion",
+                            text = versionStatusText(appVersion, latestAppVersion),
                             color = Color(0x66FFFFFF),
                             fontSize = 9.sp,
-                            maxLines = 1
+                            maxLines = 1,
+                            modifier = Modifier.clickable(onClick = onOpenLatestRelease)
                         )
                     }
                 }
+
+                PairedPcSettingsSection(
+                    pairedDevices = pairedDevices,
+                    selectedDevice = selectedDevice,
+                    hidePairedPcs = hidePairedPcs,
+                    onHidePairedPcsChange = onHidePairedPcsChange,
+                    isLandscape = true
+                )
 
                 // Screen Rotation Section (Row of 3 choices)
                 SettingsSectionCard(
@@ -2007,6 +2296,7 @@ private fun LandscapeSettingsMenu(
                 // 1. Camera Capture
                 SettingsSectionCard(
                     title = "Camera capture",
+                    caption = "Choose whether remote capture uses this screen or the armed background service.",
                     isLandscape = true,
                     modifier = Modifier.fillMaxWidth()
                 ) {
@@ -2037,6 +2327,8 @@ private fun LandscapeSettingsMenu(
                     isBackgroundCameraArmed = isBackgroundCameraArmed,
                     isBackgroundMicrophoneArmed = isBackgroundMicrophoneArmed,
                     isXiaomiDevice = isXiaomiDevice,
+                    expanded = readinessExpanded,
+                    onExpandedChange = { readinessExpanded = it },
                     isLandscape = true,
                     modifier = Modifier.fillMaxWidth(),
                     onRequestPermissions = onRequestReadinessPermissions,
@@ -2315,6 +2607,46 @@ val CameraswitchIcon: ImageVector
             verticalLineTo(19.64f)
             curveTo(16.42f, 19.64f, 20f, 16.06f, 20f, 11.64f)
             curveTo(20f, 10.07f, 19.54f, 8.61f, 18.76f, 7.74f)
+            close()
+        }
+    }.build()
+
+val FlashlightIcon: ImageVector
+    get() = ImageVector.Builder(
+        name = "FlashlightIcon",
+        defaultWidth = 24.dp,
+        defaultHeight = 24.dp,
+        viewportWidth = 24f,
+        viewportHeight = 24f
+    ).apply {
+        path(fill = SolidColor(Color.White)) {
+            moveTo(8f, 2f)
+            horizontalLineTo(16f)
+            curveTo(16.55f, 2f, 17f, 2.45f, 17f, 3f)
+            verticalLineTo(7f)
+            curveTo(17f, 7.34f, 16.83f, 7.66f, 16.55f, 7.84f)
+            lineTo(15f, 8.87f)
+            verticalLineTo(20f)
+            curveTo(15f, 21.1f, 14.1f, 22f, 13f, 22f)
+            horizontalLineTo(11f)
+            curveTo(9.9f, 22f, 9f, 21.1f, 9f, 20f)
+            verticalLineTo(8.87f)
+            lineTo(7.45f, 7.84f)
+            curveTo(7.17f, 7.66f, 7f, 7.34f, 7f, 7f)
+            verticalLineTo(3f)
+            curveTo(7f, 2.45f, 7.45f, 2f, 8f, 2f)
+            close()
+            moveTo(9f, 4f)
+            verticalLineTo(6.46f)
+            lineTo(10.55f, 7.49f)
+            curveTo(10.83f, 7.68f, 11f, 7.99f, 11f, 8.33f)
+            verticalLineTo(20f)
+            horizontalLineTo(13f)
+            verticalLineTo(8.33f)
+            curveTo(13f, 7.99f, 13.17f, 7.68f, 13.45f, 7.49f)
+            lineTo(15f, 6.46f)
+            verticalLineTo(4f)
+            horizontalLineTo(9f)
             close()
         }
     }.build()

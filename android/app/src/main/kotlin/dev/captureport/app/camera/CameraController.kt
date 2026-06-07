@@ -1,6 +1,8 @@
 package dev.captureport.app.camera
 
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import androidx.annotation.OptIn
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ExperimentalGetImage
@@ -23,6 +25,9 @@ import java.io.File
 import java.util.concurrent.Executor
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 class CameraController(
     private val context: Context,
@@ -55,6 +60,8 @@ class CameraController(
     private val qrScanningActive = AtomicBoolean(false)
     private val scanInFlight = AtomicBoolean(false)
     private var boundLifecycleOwner: LifecycleOwner? = null
+    private val _torchEnabledFlow = MutableStateFlow(false)
+    val torchEnabledFlow: StateFlow<Boolean> = _torchEnabledFlow.asStateFlow()
 
     fun bindToLifecycle(lifecycleOwner: LifecycleOwner) {
         if (boundLifecycleOwner === lifecycleOwner) {
@@ -78,27 +85,52 @@ class CameraController(
 
     // Snap photo using CameraX ImageCapture pipeline
     fun takePhoto(
+        useFlash: Boolean = false,
         onSuccess: (File) -> Unit,
         onError: (Exception) -> Unit
     ) {
         val file = File(context.cacheDir, "CP_cap_${System.currentTimeMillis()}.jpg")
         val outputOptions = ImageCapture.OutputFileOptions.Builder(file).build()
+        val torchWasEnabled = _torchEnabledFlow.value
+
+        fun restoreTorchAfterFlash() {
+            if (useFlash && !torchWasEnabled) {
+                setTorchEnabled(false)
+            }
+        }
+
+        fun captureNow() {
+            try {
+                cameraController.takePicture(
+                    outputOptions,
+                    mainExecutor,
+                    object : ImageCapture.OnImageSavedCallback {
+                        override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
+                            restoreTorchAfterFlash()
+                            onSuccess(file)
+                        }
+
+                        override fun onError(exception: ImageCaptureException) {
+                            restoreTorchAfterFlash()
+                            onError(exception)
+                        }
+                    }
+                )
+            } catch (e: Exception) {
+                restoreTorchAfterFlash()
+                onError(e)
+            }
+        }
 
         try {
-            cameraController.takePicture(
-                outputOptions,
-                mainExecutor,
-                object : ImageCapture.OnImageSavedCallback {
-                    override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
-                        onSuccess(file)
-                    }
-
-                    override fun onError(exception: ImageCaptureException) {
-                        onError(exception)
-                    }
-                }
-            )
+            if (useFlash) {
+                setTorchEnabled(true)
+                Handler(Looper.getMainLooper()).postDelayed({ captureNow() }, 180L)
+            } else {
+                captureNow()
+            }
         } catch (e: Exception) {
+            restoreTorchAfterFlash()
             onError(e)
         }
     }
@@ -192,6 +224,7 @@ class CameraController(
     }
 
     fun toggleCamera() {
+        setTorchEnabled(false)
         val currentSelector = cameraController.cameraSelector
         if (currentSelector == CameraSelector.DEFAULT_BACK_CAMERA) {
             cameraController.cameraSelector = CameraSelector.DEFAULT_FRONT_CAMERA
@@ -200,7 +233,25 @@ class CameraController(
         }
     }
 
+    fun setTorchEnabled(enabled: Boolean): Boolean {
+        return try {
+            cameraController.enableTorch(enabled)
+            _torchEnabledFlow.value = enabled
+            true
+        } catch (e: Exception) {
+            if (enabled) {
+                _torchEnabledFlow.value = false
+            }
+            false
+        }
+    }
+
+    fun toggleTorch(): Boolean {
+        return setTorchEnabled(!_torchEnabledFlow.value)
+    }
+
     fun release() {
+        setTorchEnabled(false)
         stopVideoRecording()
         unbind()
         barcodeScanner.close()

@@ -41,6 +41,9 @@ struct CapturePhotoParams {
     /// Optional device UUID, name, or substring. Defaults to the first active device.
     #[serde(default)]
     pub device: Option<String>,
+    /// Temporarily enable the phone torch before taking the photo.
+    #[serde(default)]
+    pub use_flash: Option<bool>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -51,6 +54,21 @@ struct CaptureScreenshotParams {
     /// Optional device UUID, name, or substring. Defaults to the first active device.
     #[serde(default)]
     pub device: Option<String>,
+    /// Temporarily enable the phone torch before taking the image.
+    #[serde(default)]
+    pub use_flash: Option<bool>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct SetFlashlightParams {
+    /// Exact device id from list_devices. Prefer this when more than one phone is online.
+    #[serde(default)]
+    pub target_device_id: Option<String>,
+    /// Optional device UUID, name, or substring. Defaults to the first active device.
+    #[serde(default)]
+    pub device: Option<String>,
+    /// true turns the torch on, false turns it off.
+    pub enabled: bool,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -235,7 +253,11 @@ impl CapturePortTools {
         description = "Trigger the camera on a paired phone to snap a photo and return the image directly to the agent."
     )]
     async fn capture_photo(&self, params: Parameters<CapturePhotoParams>) -> CallToolResult {
-        let args = serde_json::json!({ "target_device_id": params.0.target_device_id, "device": params.0.device });
+        let args = serde_json::json!({
+            "target_device_id": params.0.target_device_id,
+            "device": params.0.device,
+            "use_flash": params.0.use_flash
+        });
         value_to_call_tool_result(McpServer::tool_capture_photo(&self.state, &args).await)
     }
 
@@ -246,8 +268,22 @@ impl CapturePortTools {
         &self,
         params: Parameters<CaptureScreenshotParams>,
     ) -> CallToolResult {
-        let args = serde_json::json!({ "target_device_id": params.0.target_device_id, "device": params.0.device });
+        let args = serde_json::json!({
+            "target_device_id": params.0.target_device_id,
+            "device": params.0.device,
+            "use_flash": params.0.use_flash
+        });
         value_to_call_tool_result(McpServer::tool_capture_screenshot(&self.state, &args).await)
+    }
+
+    #[tool(description = "Turn the selected phone flashlight/torch on or off for continuous lighting.")]
+    async fn set_flashlight(&self, params: Parameters<SetFlashlightParams>) -> CallToolResult {
+        let args = serde_json::json!({
+            "target_device_id": params.0.target_device_id,
+            "device": params.0.device,
+            "enabled": params.0.enabled
+        });
+        value_to_call_tool_result(McpServer::tool_set_flashlight(&self.state, &args).await)
     }
 
     #[tool(description = "Record video from the camera of the specified mobile device.")]
@@ -289,7 +325,11 @@ impl CapturePortTools {
         description = "Look through the selected phone camera now: capture a fresh photo and return image content plus metadata."
     )]
     async fn look_camera(&self, params: Parameters<CapturePhotoParams>) -> CallToolResult {
-        let args = serde_json::json!({ "target_device_id": params.0.target_device_id, "device": params.0.device });
+        let args = serde_json::json!({
+            "target_device_id": params.0.target_device_id,
+            "device": params.0.device,
+            "use_flash": params.0.use_flash
+        });
         value_to_call_tool_result(McpServer::tool_capture_photo(&self.state, &args).await)
     }
 

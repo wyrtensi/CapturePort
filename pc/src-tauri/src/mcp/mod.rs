@@ -143,6 +143,10 @@ impl McpServer {
                                         "target_device_id": {
                                             "type": "string",
                                             "description": "Exact device id from list_devices. Prefer this when more than one phone is online."
+                                        },
+                                        "use_flash": {
+                                            "type": "boolean",
+                                            "description": "Temporarily enable the phone torch before taking the photo, then restore the previous torch state."
                                         }
                                     }
                                 }
@@ -164,6 +168,28 @@ impl McpServer {
                                         "duration_seconds": {
                                             "type": "integer",
                                             "description": "Optional recording duration in seconds (default 10)."
+                                        }
+                                    }
+                                }
+                            },
+                            {
+                                "name": "set_flashlight",
+                                "description": "Turn the selected phone torch on or off for continuous lighting.",
+                                "inputSchema": {
+                                    "type": "object",
+                                    "required": ["enabled"],
+                                    "properties": {
+                                        "device": {
+                                            "type": "string",
+                                            "description": "Deprecated alias for target_device_id or legacy device name/substring."
+                                        },
+                                        "target_device_id": {
+                                            "type": "string",
+                                            "description": "Exact device id from list_devices. Prefer this when more than one phone is online."
+                                        },
+                                        "enabled": {
+                                            "type": "boolean",
+                                            "description": "true turns the torch on, false turns it off."
                                         }
                                     }
                                 }
@@ -228,6 +254,10 @@ impl McpServer {
                                         "target_device_id": {
                                             "type": "string",
                                             "description": "Exact device id from list_devices. Prefer this when more than one phone is online."
+                                        },
+                                        "use_flash": {
+                                            "type": "boolean",
+                                            "description": "Temporarily enable the phone torch before taking the photo, then restore the previous torch state."
                                         }
                                     }
                                 }
@@ -459,6 +489,7 @@ impl McpServer {
                     "capture_photo" => Self::tool_capture_photo(state, args).await,
                     "capture_screenshot" => Self::tool_capture_screenshot(state, args).await,
                     "record_video" => Self::tool_record_video(state, args).await,
+                    "set_flashlight" => Self::tool_set_flashlight(state, args).await,
                     "get_device_clipboard" => Self::tool_get_device_clipboard(state, args).await,
                     "set_device_clipboard" => Self::tool_set_device_clipboard(state, args).await,
                     "snap_frame" => Self::tool_snap_frame(state).await,
@@ -873,11 +904,12 @@ impl McpServer {
         let request_id = ulid::Ulid::new().to_string();
 
         state.register_request(request_id.clone(), oneshot_tx, Duration::from_secs(12));
+        let use_flash = Self::photo_use_flash(args);
 
         let req_env = Envelope::new_request(
             request_id,
             "capture_photo".to_string(),
-            json!({ "timeout_ms": 12000 }),
+            json!({ "timeout_ms": 12000, "use_flash": use_flash }),
             None,
         );
 
@@ -941,11 +973,12 @@ impl McpServer {
         let request_id = ulid::Ulid::new().to_string();
 
         state.register_request(request_id.clone(), oneshot_tx, Duration::from_secs(12));
+        let use_flash = Self::photo_use_flash(args);
 
         let req_env = Envelope::new_request(
             request_id,
             "capture_screenshot".to_string(),
-            json!({ "timeout_ms": 12000 }),
+            json!({ "timeout_ms": 12000, "use_flash": use_flash }),
             None,
         );
 
@@ -1038,6 +1071,51 @@ impl McpServer {
             Ok(Ok(Err(err))) => Err(err),
             Ok(Err(_)) => Err("Correlation channel dropped unexpectedly".to_string()),
             Err(_) => Err("Video recording timed out.".to_string()),
+        }
+    }
+
+    pub(crate) async fn tool_set_flashlight(
+        state: &AppState,
+        args: &Value,
+    ) -> Result<Value, String> {
+        let device_id = Self::resolve_tool_device(state, args)?;
+        let enabled = args
+            .get("enabled")
+            .and_then(|value| value.as_bool())
+            .ok_or_else(|| "Missing required boolean 'enabled' argument".to_string())?;
+
+        let tx = {
+            let inner = state.inner.lock().unwrap();
+            inner.active_sessions.get(&device_id).map(|s| s.tx.clone())
+        }
+        .ok_or_else(|| "Failed to retrieve active socket channel".to_string())?;
+
+        let (oneshot_tx, oneshot_rx) = tokio::sync::oneshot::channel::<Result<Value, String>>();
+        let request_id = ulid::Ulid::new().to_string();
+
+        state.register_request(request_id.clone(), oneshot_tx, Duration::from_secs(5));
+
+        let req_env = Envelope::new_request(
+            request_id,
+            "set_flashlight".to_string(),
+            json!({ "enabled": enabled }),
+            None,
+        );
+
+        let payload_str = serde_json::to_string(&req_env).unwrap();
+        if tx
+            .send(axum::extract::ws::Message::Text(payload_str))
+            .await
+            .is_err()
+        {
+            return Err("Failed to push flashlight command onto WebSocket channel".to_string());
+        }
+
+        match timeout(Duration::from_secs(5), oneshot_rx).await {
+            Ok(Ok(Ok(result))) => Ok(result),
+            Ok(Ok(Err(err))) => Err(err),
+            Ok(Err(_)) => Err("Correlation channel dropped unexpectedly".to_string()),
+            Err(_) => Err("Flashlight command timed out.".to_string()),
         }
     }
 
@@ -1170,6 +1248,13 @@ impl McpServer {
             return Err("duration_seconds must be between 1 and 120.".to_string());
         }
         Ok(duration)
+    }
+
+    pub(crate) fn photo_use_flash(args: &Value) -> bool {
+        args.get("use_flash")
+            .or_else(|| args.get("flash"))
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false)
     }
 
     pub(crate) fn watch_camera_plan(args: &Value) -> Result<(usize, u64), String> {

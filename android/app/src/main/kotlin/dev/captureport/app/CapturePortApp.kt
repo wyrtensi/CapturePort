@@ -162,11 +162,12 @@ class CapturePortApp : Application() {
             wsClient ?: WsClient(
                 context = applicationContext,
                 scope = applicationScope,
-                onCaptureRequest = { onPhotoSnapped, onCaptureRejected ->
+                onCaptureRequest = { useFlash, onPhotoSnapped, onCaptureRejected ->
                     applicationScope.launch(Dispatchers.Main) {
                         val activeCam = cameraController
                         if (canServeRemoteCameraCapture()) {
                             activeCam.takePhoto(
+                                useFlash = useFlash,
                                 onSuccess = { file -> onPhotoSnapped(file) },
                                 onError = { err ->
                                     Log.e("CapturePortApp", "MCP photo snap failed: ${err.message}")

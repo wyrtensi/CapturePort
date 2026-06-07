@@ -32,6 +32,7 @@ class WsClient(
     private val context: Context,
     private val scope: CoroutineScope,
     private val onCaptureRequest: (
+        useFlash: Boolean,
         onPhotoSnapped: (File) -> Unit,
         onCaptureRejected: (String) -> Unit
     ) -> Unit
@@ -260,8 +261,12 @@ class WsClient(
                         ws.send(EnvelopeCodec.encodeEnvelope(resp))
                     }
                     "capture_photo", "capture_screenshot" -> {
+                        val useFlash = envelope.params?.let { params ->
+                            params.optBoolean("use_flash", params.optBoolean("flash", false))
+                        } ?: false
                         // Trigger Camera Snap
                         onCaptureRequest(
+                            useFlash,
                             { file ->
                                 scope.launch(Dispatchers.IO) {
                                     uploadPhotoFile(ws, envelope.id, file)
@@ -271,6 +276,29 @@ class WsClient(
                                 sendCaptureRejected(ws, envelope.id, reason)
                             }
                         )
+                    }
+                    "set_flashlight" -> {
+                        val enabled = envelope.params?.optBoolean("enabled") ?: false
+                        val app = CapturePortApp.instance
+                        val activeCam = app.cameraController
+                        scope.launch(Dispatchers.Main) {
+                            val ok = activeCam.setTorchEnabled(enabled)
+                            scope.launch(Dispatchers.IO) {
+                                if (ok) {
+                                    val resp = Envelope(
+                                        t = "resp",
+                                        id = envelope.id,
+                                        result = JSONObject().apply {
+                                            put("status", "success")
+                                            put("enabled", enabled)
+                                        }
+                                    )
+                                    ws.send(EnvelopeCodec.encodeEnvelope(resp))
+                                } else {
+                                    sendCaptureRejected(ws, envelope.id, "flashlight unavailable")
+                                }
+                            }
+                        }
                     }
                     "record_video" -> {
                         val duration = envelope.params?.optLong("duration_seconds") ?: 10L

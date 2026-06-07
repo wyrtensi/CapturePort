@@ -224,8 +224,21 @@ async fn regenerate_pc_identity(
 async fn get_media_history(
     state: tauri::State<'_, AppState>,
 ) -> Result<Vec<crate::state::MediaItem>, String> {
-    let inner = state.inner.lock().unwrap();
-    Ok(inner.media_history.clone())
+    let items = {
+        let inner = state.inner.lock().unwrap();
+        inner.media_history.clone()
+    };
+
+    Ok(items
+        .into_iter()
+        .map(|mut item| {
+            if item.kind == "photo" && item.base64_data.is_none() {
+                item.base64_data = crate::media::read_thumbnail_base64(&item)
+                    .or_else(|| crate::media::read_photo_base64(&item));
+            }
+            item
+        })
+        .collect())
 }
 
 #[tauri::command]
