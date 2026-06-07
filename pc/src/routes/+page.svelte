@@ -3,6 +3,9 @@
   import { fade } from "svelte/transition";
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
+  import packageJson from "../../package.json";
+
+  const appVersion = packageJson.version;
 
   type WindowView = "main" | "history" | "pairing" | "settings";
 
@@ -50,10 +53,13 @@
   let pairingEndpointMode = $state("local-only");
   let mediaHistory = $state<any[]>([]);
   let pairedDevices = $state<any[]>([]);
-  let settingsTab = $state<"general" | "network">("general");
+  let settingsTab = $state<"general" | "network" | "mcp">("general");
   let manualIpInput = $state("");
   let firewallStatus = $state("");
   let appReady = $state(false);
+  let mcpIntegrationStatus = $state<any[]>([]);
+  let mcpIntegrationBusy = $state("");
+  let mcpIntegrationMessage = $state("");
 
   // Custom Confirmation Modal State
   let showConfirmModal = $state(false);
@@ -73,6 +79,19 @@
     deviceName: "PC-Machine",
     port: 7878,
     mcpEnabled: true,
+    mcpHttpPort: 7879,
+    mcpHttpEnabled: true,
+    mcpHttpDiscoveryEnabled: true,
+    mcpHttpBindMode: "lan",
+    mcpAgentMode: "adaptive",
+    mcpAgentPreset: "lan_agent",
+    mcpStreamEnabled: false,
+    mcpMediaIndexEnabled: true,
+    mcpResourceReadsEnabled: true,
+    mcpInlineImagesEnabled: true,
+    mcpAllowedHosts: [] as string[],
+    mcpAllowedOrigins: [] as string[],
+    mcpHttpAuthToken: "",
     autoStart: false,
     closeToTray: false,
     localIpMode: "auto",
@@ -190,7 +209,16 @@
   async function openSettings() {
     try {
       settings = await invoke("get_settings");
+      await loadMcpIntegrationStatus();
     } catch (e) {}
+  }
+
+  async function loadMcpIntegrationStatus() {
+    try {
+      mcpIntegrationStatus = await invoke("get_mcp_integration_status");
+    } catch (e) {
+      mcpIntegrationStatus = [];
+    }
   }
 
   async function addManualIp() {
@@ -362,6 +390,52 @@
     }
   }
 
+  async function installMcpIntegration(id: string) {
+    mcpIntegrationBusy = id;
+    mcpIntegrationMessage = "";
+    try {
+      mcpIntegrationMessage = await invoke("install_mcp_integration", { client: id });
+      await loadMcpIntegrationStatus();
+    } catch (e) {
+      mcpIntegrationMessage = `MCP import failed: ${e}`;
+    } finally {
+      mcpIntegrationBusy = "";
+    }
+  }
+
+  function linesToList(value: string): string[] {
+    return value
+      .split(/\r?\n/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+
+  function listToLines(value: unknown): string {
+    return Array.isArray(value) ? value.join("\n") : "";
+  }
+
+  function localMcpEndpoint() {
+    return `http://127.0.0.1:${settings.mcpHttpPort || 7879}/mcp`;
+  }
+
+  function lanMcpEndpoint() {
+    const host = settings.customLocalHost || pairingLocalHosts[0] || "this-pc";
+    return `http://${host}:${settings.mcpHttpPort || 7879}/mcp`;
+  }
+
+  function mcpStdioSnippet(rootKey: "mcpServers" | "servers" = "mcpServers") {
+    return JSON.stringify({
+      [rootKey]: {
+        captureport: {
+          type: "stdio",
+          command: "C:\\Users\\<you>\\AppData\\Local\\CapturePort\\captureport-mcp.exe",
+          args: [],
+          env: {}
+        }
+      }
+    }, null, 2);
+  }
+
   function setPairingEndpointMode(mode: string) {
     pairingEndpointMode = mode;
     void refreshPairingInfo();
@@ -482,6 +556,8 @@
           {/if}
         </div>
       </div>
+
+      <div class="sidebar-version">v{appVersion}</div>
     </nav>
 
     <section class="content-area" class:content-area-centered={windowLabel === "pairing"}>
@@ -573,7 +649,7 @@
               </div>
             </div>
 
-            <div class="panel pairing-panel">
+            <div class="panel pairing-panel pairing-details-panel">
               <div class="endpoint-mode-group" aria-label="QR endpoint mode">
                 <button class:active={pairingEndpointMode === "local-only"} onclick={() => setPairingEndpointMode("local-only")}>Local only</button>
                 <button class:active={pairingEndpointMode === "local-then-internet"} onclick={() => setPairingEndpointMode("local-then-internet")}>Local + Internet</button>
@@ -692,9 +768,13 @@
               <div class="tab-strip">
                 <button class:active={settingsTab === "general"} onclick={() => settingsTab = "general"}>General</button>
                 <button class:active={settingsTab === "network"} onclick={() => settingsTab = "network"}>Network</button>
+                <button class:active={settingsTab === "mcp"} onclick={() => settingsTab = "mcp"}>MCP</button>
               </div>
 
-              <form class="settings-form tab-panel" onsubmit={(e) => { e.preventDefault(); saveSettings(); }}>
+              <form
+                class={settingsTab === "mcp" ? "settings-form tab-panel mcp-scrollable" : "settings-form tab-panel"}
+                onsubmit={(e) => { e.preventDefault(); saveSettings(); }}
+              >
                 {#if settingsTab === "general"}
                   <div class="form-group">
                     <label for="device-name">Device Name</label>
@@ -757,6 +837,142 @@
                     <p class="settings-note">{firewallStatus}</p>
                   {/if}
                   <p class="settings-note">Router port forwarding is manual. Forward the external TCP port to this PC local address and WebSocket port.</p>
+                {:else if settingsTab === "mcp"}
+                  <div class="settings-section-full mcp-status-panel">
+                    <div>
+                      <span class="settings-kicker">Streamable HTTP</span>
+                      <strong>{localMcpEndpoint()}</strong>
+                    </div>
+                    <div>
+                      <span class="settings-kicker">LAN endpoint</span>
+                      <strong>{lanMcpEndpoint()}</strong>
+                    </div>
+                  </div>
+
+                  <div class="form-group checkbox-group">
+                    <input id="mcp-http-enabled" type="checkbox" bind:checked={settings.mcpHttpEnabled} />
+                    <label for="mcp-http-enabled">Enable MCP Streamable HTTP server</label>
+                  </div>
+
+                  <div class="form-group checkbox-group">
+                    <input id="mcp-discovery-enabled" type="checkbox" bind:checked={settings.mcpHttpDiscoveryEnabled} />
+                    <label for="mcp-discovery-enabled">Advertise MCP over local network discovery</label>
+                  </div>
+
+                  <div class="form-group">
+                    <label for="mcp-http-port">MCP HTTP Port</label>
+                    <input id="mcp-http-port" type="number" bind:value={settings.mcpHttpPort} min="1" max="65535" />
+                  </div>
+
+                  <div class="form-group">
+                    <label for="mcp-bind-mode">Bind Mode</label>
+                    <select id="mcp-bind-mode" bind:value={settings.mcpHttpBindMode}>
+                      <option value="lan">LAN and local agents</option>
+                      <option value="loopback">Local machine only</option>
+                    </select>
+                    <p class="field-hint">Controls where the MCP HTTP server listens. LAN lets editors and agents on this network connect; local machine only keeps it on 127.0.0.1.</p>
+                  </div>
+
+                  <div class="form-group">
+                    <label for="mcp-agent-preset">Agent Preset</label>
+                    <select id="mcp-agent-preset" bind:value={settings.mcpAgentPreset}>
+                      <option value="privacy_first">Privacy first</option>
+                      <option value="local_agent">Local agent</option>
+                      <option value="lan_agent">LAN agent</option>
+                      <option value="vision_heavy">Vision heavy</option>
+                    </select>
+                    <p class="field-hint">Tunes defaults for agents: privacy first limits exposure, LAN agent balances discovery and media, vision heavy favors photo thumbnails and inline images.</p>
+                  </div>
+
+                  <div class="form-group">
+                    <label for="mcp-agent-mode">Agent Mode</label>
+                    <select id="mcp-agent-mode" bind:value={settings.mcpAgentMode}>
+                      <option value="adaptive">Adaptive request/response</option>
+                      <option value="stream">Stream resources when supported</option>
+                    </select>
+                  </div>
+
+                  <div class="form-group checkbox-group">
+                    <input id="mcp-media-index" type="checkbox" bind:checked={settings.mcpMediaIndexEnabled} />
+                    <label for="mcp-media-index">Expose received media history to MCP</label>
+                  </div>
+
+                  <div class="form-group checkbox-group">
+                    <input id="mcp-resource-reads" type="checkbox" bind:checked={settings.mcpResourceReadsEnabled} />
+                    <label for="mcp-resource-reads">Allow MCP resource reads for photos and thumbnails</label>
+                  </div>
+
+                  <div class="form-group checkbox-group">
+                    <input id="mcp-inline-images" type="checkbox" bind:checked={settings.mcpInlineImagesEnabled} />
+                    <label for="mcp-inline-images">Return inline image content when clients support it</label>
+                  </div>
+
+                  <div class="form-group checkbox-group">
+                    <input id="mcp-stream-enabled" type="checkbox" bind:checked={settings.mcpStreamEnabled} />
+                    <label for="mcp-stream-enabled">Opt into streaming-oriented MCP behavior</label>
+                  </div>
+
+                  <div class="form-group">
+                    <label for="mcp-auth-token">LAN Auth Token</label>
+                    <input id="mcp-auth-token" type="password" bind:value={settings.mcpHttpAuthToken} placeholder="optional, 12+ characters" autocomplete="off" />
+                  </div>
+
+                  <div class="form-group">
+                    <label for="mcp-allowed-hosts">Allowed Hosts</label>
+                    <textarea
+                      id="mcp-allowed-hosts"
+                      value={listToLines(settings.mcpAllowedHosts)}
+                      oninput={(e) => settings.mcpAllowedHosts = linesToList(e.currentTarget.value)}
+                      placeholder="Leave empty to use local addresses automatically"
+                    ></textarea>
+                  </div>
+
+                  <div class="form-group">
+                    <label for="mcp-allowed-origins">Allowed Origins</label>
+                    <textarea
+                      id="mcp-allowed-origins"
+                      value={listToLines(settings.mcpAllowedOrigins)}
+                      oninput={(e) => settings.mcpAllowedOrigins = linesToList(e.currentTarget.value)}
+                      placeholder="Leave empty to allow local CapturePort origins"
+                    ></textarea>
+                  </div>
+
+                  <div class="settings-section-full">
+                    <div class="section-title-row">
+                      <div>
+                        <h3>MCP Client Import</h3>
+                        <p>Install CapturePort into local agents that do not auto-discover LAN MCP servers.</p>
+                      </div>
+                      <button type="button" class="secondary-btn" onclick={() => copyToClipboard(mcpStdioSnippet(), "mcp-snippet")}>
+                        {copyTarget === "mcp-snippet" ? "Copied" : "Copy JSON"}
+                      </button>
+                    </div>
+                    <div class="integration-grid">
+                      {#each mcpIntegrationStatus as client}
+                        <div class="integration-card">
+                          <div>
+                            <strong>{client.label}</strong>
+                            <span>{client.installed ? "Installed" : client.detail}</span>
+                            {#if client.config_path}
+                              <code>{client.config_path}</code>
+                            {/if}
+                          </div>
+                          <button
+                            type="button"
+                            class="secondary-btn"
+                            disabled={!client.available || mcpIntegrationBusy === client.id}
+                            onclick={() => installMcpIntegration(client.id)}
+                          >
+                            {mcpIntegrationBusy === client.id ? "Working..." : client.installed ? "Update" : "Install"}
+                          </button>
+                        </div>
+                      {/each}
+                    </div>
+                    {#if mcpIntegrationMessage}
+                      <p class="settings-note">{mcpIntegrationMessage} Restart the target editor after import.</p>
+                    {/if}
+                    <p class="settings-note">VS Code uses a `servers` root in `mcp.json`; Claude Desktop and Cursor use `mcpServers`. CapturePort imports the matching format automatically.</p>
+                  </div>
                 {/if}
 
                 <button type="submit" class="submit-btn">Save Configurations</button>
@@ -965,6 +1181,16 @@
     flex-shrink: 0;
   }
 
+  .pairing-details-panel {
+    align-items: stretch;
+    min-height: 0;
+  }
+
+  .pairing-details-panel > .connection-details-card {
+    flex-shrink: 1;
+    min-height: 0;
+  }
+
   .pairing-panel:hover {
     border-color: rgba(255, 255, 255, 0.08);
     box-shadow: 
@@ -1036,7 +1262,9 @@
     transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
     border: 1px solid rgba(255, 255, 255, 0.06);
     position: relative;
-    overflow: hidden;
+    overflow: clip;
+    isolation: isolate;
+    contain: paint;
   }
 
   .qr-polaroid:hover {
@@ -1238,6 +1466,12 @@
     flex-direction: column;
     gap: 8px;
     width: 100%;
+    max-height: clamp(90px, 20vh, 148px);
+    min-height: 0;
+    overflow-y: auto;
+    padding-right: 3px;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(164, 180, 255, 0.45) rgba(255, 255, 255, 0.04);
   }
 
   .ip-address-row {
@@ -1877,7 +2111,9 @@
   }
 
   .form-group input[type="text"],
-  .form-group input[type="number"] {
+  .form-group input[type="password"],
+  .form-group input[type="number"],
+  .form-group textarea {
     background-color: rgba(255, 255, 255, 0.02);
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 10px;
@@ -1886,25 +2122,39 @@
     font-size: 14px;
     outline: none;
     transition: all 0.2s ease;
+    width: 100%;
+    box-sizing: border-box;
   }
 
   .form-group input[type="text"]:hover,
-  .form-group input[type="number"]:hover {
+  .form-group input[type="password"]:hover,
+  .form-group input[type="number"]:hover,
+  .form-group textarea:hover {
     border-color: rgba(255, 255, 255, 0.16);
     background-color: rgba(255, 255, 255, 0.03);
   }
 
   .form-group input[type="text"]:focus,
-  .form-group input[type="number"]:focus {
+  .form-group input[type="password"]:focus,
+  .form-group input[type="number"]:focus,
+  .form-group textarea:focus {
     border-color: #3B5BFF;
     background-color: rgba(255, 255, 255, 0.04);
     box-shadow: 0 0 10px rgba(59, 91, 255, 0.15);
   }
 
   .form-group input[type="text"]:focus:hover,
-  .form-group input[type="number"]:focus:hover {
+  .form-group input[type="password"]:focus:hover,
+  .form-group input[type="number"]:focus:hover,
+  .form-group textarea:focus:hover {
     border-color: #3B5BFF;
     background-color: rgba(255, 255, 255, 0.04);
+  }
+
+  .form-group textarea {
+    min-height: 78px;
+    resize: vertical;
+    line-height: 1.4;
   }
 
   .form-group select {
@@ -2267,7 +2517,17 @@
     gap: 14px 16px;
   }
 
+  .settings-form.mcp-scrollable {
+    max-height: min(62vh, 560px);
+    min-height: 0;
+    overflow-y: auto;
+    padding-right: 8px;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(164, 180, 255, 0.45) rgba(255, 255, 255, 0.04);
+  }
+
   .settings-form > .checkbox-group,
+  .settings-form > .settings-section-full,
   .settings-form > .settings-note,
   .settings-form > .submit-btn,
   .settings-form > .save-status-container {
@@ -2281,6 +2541,13 @@
     margin: 4px 0 0 0;
   }
 
+  .field-hint {
+    margin: 0;
+    color: #8C8E96;
+    font-size: 11px;
+    line-height: 1.45;
+  }
+
   .inline-input {
     display: flex;
     gap: 12px;
@@ -2288,6 +2555,102 @@
 
   .inline-input input {
     flex: 1;
+  }
+
+  .settings-section-full {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-width: 0;
+  }
+
+  .mcp-status-panel {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    padding: 14px;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 14px;
+    background: rgba(255, 255, 255, 0.02);
+  }
+
+  .mcp-status-panel div {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .mcp-status-panel strong {
+    color: #E3E3E6;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    overflow-wrap: anywhere;
+  }
+
+  .settings-kicker {
+    color: #8C8E96;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+  }
+
+  .section-title-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    align-items: flex-start;
+  }
+
+  .section-title-row h3 {
+    margin: 0 0 4px;
+    color: #E3E3E6;
+    font-size: 15px;
+  }
+
+  .section-title-row p {
+    margin: 0;
+    color: #8C8E96;
+    font-size: 12px;
+  }
+
+  .integration-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .integration-card {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: center;
+    min-width: 0;
+    padding: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.018);
+  }
+
+  .integration-card div {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .integration-card strong {
+    color: #E3E3E6;
+    font-size: 13px;
+  }
+
+  .integration-card span,
+  .integration-card code {
+    color: #8C8E96;
+    font-size: 11px;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
   }
 
   /* Settings Trigger Button Glow & Spin effect */
@@ -2652,6 +3015,17 @@
 
     .settings-form {
       grid-template-columns: 1fr;
+    }
+
+    .mcp-status-panel,
+    .integration-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .section-title-row,
+    .integration-card {
+      align-items: stretch;
+      flex-direction: column;
     }
   }
 </style>

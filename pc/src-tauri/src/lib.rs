@@ -15,6 +15,7 @@ use crate::mcp::http_server::McpHttpServer;
 use crate::pairing::qr::{EndpointMode, PairingEndpoints, QrGenerator};
 use crate::state::AppState;
 use serde_json::json;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::atomic::Ordering;
 use tauri::{Emitter, Manager};
@@ -258,6 +259,33 @@ fn get_settings_path() -> std::path::PathBuf {
     let app_dir = base_dir.join("CapturePort");
     let _ = std::fs::create_dir_all(&app_dir);
     app_dir.join("settings.json")
+}
+
+fn mcp_sidecar_command() -> Result<PathBuf, String> {
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let mut sidecar = exe;
+    sidecar.set_file_name(format!("captureport-mcp{}", std::env::consts::EXE_SUFFIX));
+    Ok(sidecar)
+}
+
+fn user_profile_path(path: &[&str]) -> Option<PathBuf> {
+    std::env::var_os("USERPROFILE").map(|home| {
+        let mut base = PathBuf::from(home);
+        for part in path {
+            base.push(part);
+        }
+        base
+    })
+}
+
+fn appdata_path(path: &[&str]) -> Option<PathBuf> {
+    std::env::var_os("APPDATA").map(|appdata| {
+        let mut base = PathBuf::from(appdata);
+        for part in path {
+            base.push(part);
+        }
+        base
+    })
 }
 
 fn default_port() -> u16 {
@@ -754,6 +782,224 @@ async fn save_settings(
     Ok(())
 }
 
+#[derive(serde::Serialize)]
+struct McpIntegrationStatus {
+    id: String,
+    label: String,
+    config_path: String,
+    available: bool,
+    installed: bool,
+    detail: String,
+}
+
+fn captureport_stdio_server(command: &Path) -> serde_json::Value {
+    json!({
+        "type": "stdio",
+        "command": command.to_string_lossy(),
+        "args": [],
+        "env": {}
+    })
+}
+
+fn read_json_config(path: &Path) -> Result<serde_json::Value, String> {
+    if !path.exists() {
+        return Ok(json!({}));
+    }
+    let content = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+    serde_json::from_str(&content).map_err(|e| format!("Invalid JSON in {}: {e}", path.display()))
+}
+
+fn write_json_config_with_backup(path: &Path, value: &serde_json::Value) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    if path.exists() {
+        let backup = path.with_extension(format!(
+            "{}bak-captureport",
+            path.extension()
+                .and_then(|extension| extension.to_str())
+                .map(|extension| format!("{extension}."))
+                .unwrap_or_default()
+        ));
+        std::fs::copy(path, backup).map_err(|e| e.to_string())?;
+    }
+    let content = serde_json::to_string_pretty(value).map_err(|e| e.to_string())?;
+    std::fs::write(path, content).map_err(|e| e.to_string())
+}
+
+fn install_json_mcp_server(path: &Path, root_key: &str, command: &Path) -> Result<(), String> {
+    let mut value = read_json_config(path)?;
+    if !value.is_object() {
+        value = json!({});
+    }
+    let root = value
+        .as_object_mut()
+        .ok_or_else(|| "MCP config root must be a JSON object".to_string())?;
+    let servers = root
+        .entry(root_key.to_string())
+        .or_insert_with(|| json!({}));
+    if !servers.is_object() {
+        *servers = json!({});
+    }
+    servers
+        .as_object_mut()
+        .ok_or_else(|| "MCP servers section must be a JSON object".to_string())?
+        .insert("captureport".to_string(), captureport_stdio_server(command));
+    write_json_config_with_backup(path, &value)
+}
+
+fn json_mcp_server_installed(path: &Path, root_key: &str) -> bool {
+    read_json_config(path)
+        .ok()
+        .and_then(|value| value.get(root_key)?.get("captureport").cloned())
+        .is_some()
+}
+
+fn install_codex_mcp_server(path: &Path, command: &Path) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let existing = if path.exists() {
+        std::fs::read_to_string(path).map_err(|e| e.to_string())?
+    } else {
+        String::new()
+    };
+    if path.exists() {
+        std::fs::copy(path, path.with_extension("toml.bak-captureport"))
+            .map_err(|e| e.to_string())?;
+    }
+    let mut filtered = Vec::new();
+    let mut skipping = false;
+    for line in existing.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            skipping = matches!(
+                trimmed,
+                "[mcp_servers.captureport]" | "[mcp_servers.\"captureport\"]"
+            );
+        }
+        if !skipping {
+            filtered.push(line.to_string());
+        }
+    }
+    while filtered.last().is_some_and(|line| line.trim().is_empty()) {
+        filtered.pop();
+    }
+    let escaped = command
+        .to_string_lossy()
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"");
+    filtered.push(String::new());
+    filtered.push("[mcp_servers.captureport]".to_string());
+    filtered.push(format!("command = \"{escaped}\""));
+    filtered.push("args = []".to_string());
+    filtered.push(String::new());
+    std::fs::write(path, filtered.join("\n")).map_err(|e| e.to_string())
+}
+
+fn codex_mcp_server_installed(path: &Path) -> bool {
+    std::fs::read_to_string(path)
+        .map(|content| {
+            content.contains("[mcp_servers.captureport]")
+                || content.contains("[mcp_servers.\"captureport\"]")
+        })
+        .unwrap_or(false)
+}
+
+fn integration_status(
+    id: &str,
+    label: &str,
+    path: Option<PathBuf>,
+    installed: impl FnOnce(&Path) -> bool,
+    detail: &str,
+) -> McpIntegrationStatus {
+    if let Some(path) = path {
+        McpIntegrationStatus {
+            id: id.to_string(),
+            label: label.to_string(),
+            installed: installed(&path),
+            available: true,
+            config_path: path.to_string_lossy().to_string(),
+            detail: detail.to_string(),
+        }
+    } else {
+        McpIntegrationStatus {
+            id: id.to_string(),
+            label: label.to_string(),
+            installed: false,
+            available: false,
+            config_path: String::new(),
+            detail: "Config location is unavailable on this OS user profile.".to_string(),
+        }
+    }
+}
+
+#[tauri::command]
+async fn get_mcp_integration_status() -> Result<Vec<McpIntegrationStatus>, String> {
+    Ok(vec![
+        integration_status(
+            "claude",
+            "Claude Desktop",
+            appdata_path(&["Claude", "claude_desktop_config.json"]),
+            |path| json_mcp_server_installed(path, "mcpServers"),
+            "Adds CapturePort as a local stdio MCP server.",
+        ),
+        integration_status(
+            "vscode",
+            "VS Code",
+            appdata_path(&["Code", "User", "mcp.json"]),
+            |path| json_mcp_server_installed(path, "servers"),
+            "Adds CapturePort to the user MCP server list.",
+        ),
+        integration_status(
+            "cursor",
+            "Cursor",
+            user_profile_path(&[".cursor", "mcp.json"]),
+            |path| json_mcp_server_installed(path, "mcpServers"),
+            "Adds CapturePort to Cursor's global MCP file.",
+        ),
+        integration_status(
+            "codex",
+            "Codex",
+            user_profile_path(&[".codex", "config.toml"]),
+            codex_mcp_server_installed,
+            "Adds CapturePort under [mcp_servers.captureport].",
+        ),
+    ])
+}
+
+#[tauri::command]
+async fn install_mcp_integration(client: String) -> Result<String, String> {
+    let command = mcp_sidecar_command()?;
+    match client.as_str() {
+        "claude" => {
+            let path = appdata_path(&["Claude", "claude_desktop_config.json"])
+                .ok_or_else(|| "APPDATA is not available".to_string())?;
+            install_json_mcp_server(&path, "mcpServers", &command)?;
+            Ok(format!("CapturePort added to {}.", path.display()))
+        }
+        "vscode" => {
+            let path = appdata_path(&["Code", "User", "mcp.json"])
+                .ok_or_else(|| "APPDATA is not available".to_string())?;
+            install_json_mcp_server(&path, "servers", &command)?;
+            Ok(format!("CapturePort added to {}.", path.display()))
+        }
+        "cursor" => {
+            let path = user_profile_path(&[".cursor", "mcp.json"])
+                .ok_or_else(|| "USERPROFILE is not available".to_string())?;
+            install_json_mcp_server(&path, "mcpServers", &command)?;
+            Ok(format!("CapturePort added to {}.", path.display()))
+        }
+        "codex" => {
+            let path = user_profile_path(&[".codex", "config.toml"])
+                .ok_or_else(|| "USERPROFILE is not available".to_string())?;
+            install_codex_mcp_server(&path, &command)?;
+            Ok(format!("CapturePort added to {}.", path.display()))
+        }
+        other => Err(format!("Unknown MCP client '{other}'")),
+    }
+}
+
 #[tauri::command]
 async fn detect_local_advertised_ip() -> Result<String, String> {
     QrGenerator::get_local_ip().ok_or_else(|| "No local address found".to_string())
@@ -1126,6 +1372,8 @@ pub fn run() {
             open_media_file,
             get_settings,
             save_settings,
+            get_mcp_integration_status,
+            install_mcp_integration,
             detect_local_advertised_ip,
             detect_public_ip,
             open_firewall_port,
@@ -1210,6 +1458,57 @@ mod tests {
             .apply_mcp_patch(&json!({ "mcpHttpAuthToken": "short" }))
             .unwrap_err();
         assert!(err.contains("at least 12 characters"));
+    }
+
+    #[test]
+    fn json_mcp_install_preserves_existing_servers() {
+        let root =
+            std::env::temp_dir().join(format!("captureport-json-mcp-test-{}", ulid::Ulid::new()));
+        std::fs::create_dir_all(&root).unwrap();
+        let config = root.join("mcp.json");
+        std::fs::write(
+            &config,
+            r#"{"servers":{"existing":{"type":"stdio","command":"old","args":[]}}}"#,
+        )
+        .unwrap();
+
+        install_json_mcp_server(
+            &config,
+            "servers",
+            Path::new("C:\\CapturePort\\captureport-mcp.exe"),
+        )
+        .unwrap();
+        let value = read_json_config(&config).unwrap();
+
+        assert_eq!(value["servers"]["existing"]["command"], "old");
+        assert_eq!(
+            value["servers"]["captureport"]["command"],
+            "C:\\CapturePort\\captureport-mcp.exe"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn codex_mcp_install_replaces_captureport_section_only() {
+        let root =
+            std::env::temp_dir().join(format!("captureport-codex-mcp-test-{}", ulid::Ulid::new()));
+        std::fs::create_dir_all(&root).unwrap();
+        let config = root.join("config.toml");
+        std::fs::write(
+            &config,
+            "[mcp_servers.pencil]\ncommand = \"pencil\"\nargs = []\n\n[mcp_servers.captureport]\ncommand = \"old\"\nargs = []\n",
+        )
+        .unwrap();
+
+        install_codex_mcp_server(&config, Path::new("C:\\CapturePort\\captureport-mcp.exe"))
+            .unwrap();
+        let content = std::fs::read_to_string(&config).unwrap();
+
+        assert!(content.contains("[mcp_servers.pencil]"));
+        assert_eq!(content.matches("[mcp_servers.captureport]").count(), 1);
+        assert!(content.contains("C:\\\\CapturePort\\\\captureport-mcp.exe"));
+        assert!(!content.contains("command = \"old\""));
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

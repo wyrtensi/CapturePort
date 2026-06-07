@@ -2,6 +2,7 @@ package dev.captureport.app.receivers
 
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
@@ -21,9 +22,11 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
@@ -62,7 +65,6 @@ import androidx.camera.video.VideoRecordEvent
 import dev.captureport.app.CapturePortApp
 import dev.captureport.app.CameraCapturePolicy
 import dev.captureport.app.ReceiverConnectionMode
-import dev.captureport.app.shouldShowXiaomiAutostartHint
 import dev.captureport.app.camera.CameraController
 import dev.captureport.app.data.PairedDevice
 import dev.captureport.app.transfer.TransferService
@@ -79,6 +81,32 @@ enum class RotationLockMode {
     AUTO, PORTRAIT, LANDSCAPE
 }
 
+private fun appVersionName(context: Context): String {
+    return runCatching {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            context.packageManager.getPackageInfo(
+                context.packageName,
+                PackageManager.PackageInfoFlags.of(0)
+            ).versionName
+        } else {
+            @Suppress("DEPRECATION")
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName
+        }
+    }.getOrNull().orEmpty()
+}
+
+private fun shouldShowReceiverXiaomiAutostartHint(
+    manufacturer: String,
+    display: String
+): Boolean {
+    val manufacturerText = manufacturer.lowercase()
+    val displayText = display.lowercase()
+    return manufacturerText.contains("xiaomi") ||
+        manufacturerText.contains("poco") ||
+        displayText.contains("hyperos") ||
+        displayText.contains("miui")
+}
+
 @OptIn(ExperimentalAnimationApi::class)
 @Composable
 fun ReceiversScreen(
@@ -89,6 +117,7 @@ fun ReceiversScreen(
     val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
     val app = CapturePortApp.instance
+    val appVersion = remember(context) { appVersionName(context) }
 
     val pairedDevices by viewModel.pairedDevices.collectAsState()
     val selectedDevice by viewModel.selectedDevice.collectAsState()
@@ -106,7 +135,7 @@ fun ReceiversScreen(
     val isBackgroundMicrophoneArmed by app.isBackgroundMicrophoneArmedFlow.collectAsState()
     var batteryUnrestricted by remember { mutableStateOf(isIgnoringBatteryOptimizations(context)) }
     val isXiaomiDevice = remember {
-        shouldShowXiaomiAutostartHint(Build.MANUFACTURER, Build.DISPLAY)
+        shouldShowReceiverXiaomiAutostartHint(Build.MANUFACTURER, Build.DISPLAY)
     }
 
     var rotationLockMode by rememberSaveable { mutableStateOf(RotationLockMode.AUTO) }
@@ -890,6 +919,7 @@ fun ReceiversScreen(
                         onRequestReadinessPermissions = { requestBackgroundReadinessPermissions() },
                         onOpenBatterySettings = { openBatterySettings() },
                         onOpenXiaomiAutostartSettings = { openXiaomiAutostartSettings() },
+                        appVersion = appVersion,
                         onNavigateToPairing = {
                             showSettingsMenu = false
                             onNavigateToPairing()
@@ -915,6 +945,7 @@ fun ReceiversScreen(
                         onRequestReadinessPermissions = { requestBackgroundReadinessPermissions() },
                         onOpenBatterySettings = { openBatterySettings() },
                         onOpenXiaomiAutostartSettings = { openXiaomiAutostartSettings() },
+                        appVersion = appVersion,
                         onNavigateToPairing = {
                             showSettingsMenu = false
                             onNavigateToPairing()
@@ -1570,11 +1601,14 @@ private fun PortraitSettingsMenu(
     onRequestReadinessPermissions: () -> Unit,
     onOpenBatterySettings: () -> Unit,
     onOpenXiaomiAutostartSettings: () -> Unit,
+    appVersion: String,
     onNavigateToPairing: () -> Unit
 ) {
     Box(
         modifier = Modifier
-            .width(340.dp)
+            .widthIn(max = 340.dp)
+            .fillMaxWidth(0.92f)
+            .heightIn(max = 560.dp)
             .clip(RoundedCornerShape(28.dp))
             .background(
                 brush = Brush.verticalGradient(
@@ -1591,6 +1625,7 @@ private fun PortraitSettingsMenu(
             .padding(16.dp)
     ) {
         Column(
+            modifier = Modifier.verticalScroll(rememberScrollState()),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             // Header Row
@@ -1615,6 +1650,14 @@ private fun PortraitSettingsMenu(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
+                    if (appVersion.isNotBlank()) {
+                        Text(
+                            text = "v$appVersion",
+                            color = Color(0x66FFFFFF),
+                            fontSize = 10.sp,
+                            maxLines = 1
+                        )
+                    }
                 }
                 SettingsStatusPill(
                     text = connectionState,
@@ -1799,12 +1842,13 @@ private fun LandscapeSettingsMenu(
     onRequestReadinessPermissions: () -> Unit,
     onOpenBatterySettings: () -> Unit,
     onOpenXiaomiAutostartSettings: () -> Unit,
+    appVersion: String,
     onNavigateToPairing: () -> Unit
 ) {
     Box(
         modifier = Modifier
-            .width(500.dp)
-            .height(286.dp)
+            .width(480.dp)
+            .height(268.dp)
             .clip(RoundedCornerShape(24.dp))
             .background(
                 brush = Brush.verticalGradient(
@@ -1828,8 +1872,9 @@ private fun LandscapeSettingsMenu(
             Column(
                 modifier = Modifier
                     .weight(1f)
-                    .fillMaxHeight(),
-                verticalArrangement = Arrangement.SpaceBetween
+                    .fillMaxHeight()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 // Header Info
                 Column(modifier = Modifier.fillMaxWidth()) {
@@ -1858,6 +1903,14 @@ private fun LandscapeSettingsMenu(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
+                    if (appVersion.isNotBlank()) {
+                        Text(
+                            text = "v$appVersion",
+                            color = Color(0x66FFFFFF),
+                            fontSize = 9.sp,
+                            maxLines = 1
+                        )
+                    }
                 }
 
                 // Screen Rotation Section (Row of 3 choices)
@@ -1947,8 +2000,9 @@ private fun LandscapeSettingsMenu(
             Column(
                 modifier = Modifier
                     .weight(1f)
-                    .fillMaxHeight(),
-                verticalArrangement = Arrangement.SpaceBetween
+                    .fillMaxHeight()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 // 1. Camera Capture
                 SettingsSectionCard(

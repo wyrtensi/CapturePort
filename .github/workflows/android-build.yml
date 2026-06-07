@@ -62,11 +62,20 @@ jobs:
         working-directory: android
         run: ./gradlew assembleDebug assembleRelease
 
+      - name: Name APK outputs
+        working-directory: android
+        shell: bash
+        run: |
+          version_name="$(grep -m1 'versionName' app/build.gradle.kts | sed -E 's/.*"([^"]+)".*/\1/')"
+          mkdir -p app/build/outputs/apk/named
+          cp app/build/outputs/apk/debug/*.apk "app/build/outputs/apk/named/CapturePort-${version_name}-android-debug.apk"
+          cp app/build/outputs/apk/release/*.apk "app/build/outputs/apk/named/CapturePort-${version_name}-android-unsigned-release.apk"
+
       - name: Upload Installable Debug APK Artifact
         uses: actions/upload-artifact@v7
         with:
           name: captureport-android-debug-apk
-          path: android/app/build/outputs/apk/debug/*.apk
+          path: android/app/build/outputs/apk/named/*-android-debug.apk
           if-no-files-found: error
           retention-days: 14
 
@@ -74,7 +83,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: captureport-android-unsigned-release-apk
-          path: android/app/build/outputs/apk/release/*.apk
+          path: android/app/build/outputs/apk/named/*-android-unsigned-release.apk
           if-no-files-found: error
           retention-days: 14
 
@@ -84,6 +93,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          files: android/app/build/outputs/apk/debug/*.apk
+          files: |
+            android/app/build/outputs/apk/named/*-android-debug.apk
+            android/app/build/outputs/apk/named/*-android-unsigned-release.apk
           draft: true
           prerelease: false
