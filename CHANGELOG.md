@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.10] - 2026-06-10
+### Fixed
+- Fixed pairing failing with "Invalid or expired pairing nonce" when the PC's device name contained spaces or special characters (e.g. the default macOS name `Name's MacBook Pro`). The pairing URL now percent-encodes free-text and host fields so the phone parses the nonce and signature correctly.
+
+### Added
+- Receiver cards can now be edited and removed from the settings drawer even when "Hide paired PCs" is enabled, so hidden receivers stay manageable.
+
+### Changed
+- Polished the expanded receiver card on the camera screen: endpoints are shown as labeled monospace rows (including port and a separate internet/WAN address when configured), and the Edit/Remove actions are now clear labeled buttons.
+
 ## [0.3.1] - 2026-06-04
 ### Fixed
 - Fixed bug where a system-type notification badge (like a '1') was sometimes displayed on the Android launcher app icon (the camera icon) during background file transfers, by disabling notification badges on the transfer channel.

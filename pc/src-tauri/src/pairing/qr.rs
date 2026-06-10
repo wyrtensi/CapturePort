@@ -5,6 +5,21 @@ use if_addrs::{get_if_addrs, IfAddr};
 use qrcodegen::{QrCode, QrCodeEcc};
 use std::net::{IpAddr, Ipv4Addr, UdpSocket};
 
+// Percent-encode a query value, keeping only the RFC 3986 unreserved chars.
+// Used so free-text fields (device name, hosts) can't break QR URL parsing.
+fn percent_encode(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for byte in value.as_bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(*byte as char)
+            }
+            _ => out.push_str(&format!("%{:02X}", byte)),
+        }
+    }
+    out
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum EndpointMode {
     LocalOnly,
@@ -220,6 +235,7 @@ impl QrGenerator {
     }
 
     // Creates the pairing URL and renders it as an SVG data URL
+    #[allow(clippy::too_many_arguments)]
     pub fn generate_pairing_qr(
         pubkey: &[u8; 32],
         privkey: &[u8; 32],
@@ -262,14 +278,29 @@ impl QrGenerator {
         let nonce_b64 = BASE64_URL_SAFE_NO_PAD.encode(nonce);
         let sig_b64 = BASE64_URL_SAFE_NO_PAD.encode(signature.to_bytes());
 
-        // 4. Construct pairing URL
+        // 4. Construct pairing URL.
+        // Free-text / host fields must be percent-encoded: a device name like
+        // "Wyrtensi's MacBook Pro" (spaces, apostrophe) would otherwise corrupt
+        // query parsing on the phone and shift the nonce/sig values.
         let mut pair_url = format!(
             "captureport://pair?v=1&host={}&hosts={}&port={}&pk={}&name={}&os={}&nonce={}&sig={}",
-            host, hosts_param, port, pk_b64, device_name, os, nonce_b64, sig_b64
+            percent_encode(&host),
+            percent_encode(&hosts_param),
+            port,
+            pk_b64,
+            percent_encode(&device_name),
+            os,
+            nonce_b64,
+            sig_b64
         );
         pair_url.push_str(&format!(
             "&local_hosts={}&local_port={}&internet_host={}&internet_port={}&endpoint_mode={}&mcp_port={}",
-            local_hosts_param, endpoints.local_port, internet_host, internet_port, mode, mcp_port
+            percent_encode(&local_hosts_param),
+            endpoints.local_port,
+            percent_encode(&internet_host),
+            internet_port,
+            mode,
+            mcp_port
         ));
 
         // 5. Generate fingerprint: first 8 bytes of sha256(pk) formatted as hex split by colons

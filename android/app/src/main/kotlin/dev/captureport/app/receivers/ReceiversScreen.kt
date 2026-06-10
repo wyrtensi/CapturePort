@@ -734,51 +734,52 @@ fun ReceiversScreen(
                                             }
                                         }
                                         if (!isCollapsed) {
-                                            Spacer(modifier = Modifier.height(6.dp))
-                                            val hosts = device.localHosts.ifBlank { device.host }.split(',').map { it.trim() }.filter { it.isNotEmpty() }
+                                            Spacer(modifier = Modifier.height(8.dp))
+                                            val hosts = device.localHosts.ifBlank { device.host }
+                                                .split(',').map { it.trim() }.filter { it.isNotEmpty() }
                                             val firstHost = hosts.firstOrNull() ?: device.host
+                                            val localPort = device.localPort.takeIf { it > 0 } ?: device.port
+                                            val firstHostText = if (localPort > 0) "$firstHost:$localPort" else firstHost
                                             val moreCount = (hosts.size - 1).coerceAtLeast(0)
-                                            val hostText = if (moreCount > 0) "$firstHost +$moreCount" else firstHost
-                                            Text(
-                                                text = "${device.os.uppercase()} · $hostText",
-                                                color = Color(0xFF8C8E96),
-                                                fontSize = 11.sp,
-                                                fontFamily = FontFamily.SansSerif
+
+                                            // Local endpoint
+                                            EndpointLine(
+                                                label = device.os.uppercase(),
+                                                value = if (moreCount > 0) "$firstHostText  +$moreCount" else firstHostText
                                             )
-                                            Spacer(modifier = Modifier.height(10.dp))
+                                            // Internet endpoint, when configured
+                                            if (device.internetHost.isNotBlank()) {
+                                                Spacer(modifier = Modifier.height(3.dp))
+                                                val inetPort = device.internetPort.takeIf { it > 0 }
+                                                EndpointLine(
+                                                    label = "WAN",
+                                                    value = if (inetPort != null) "${device.internetHost}:$inetPort" else device.internetHost
+                                                )
+                                            }
+
+                                            Spacer(modifier = Modifier.height(12.dp))
                                             Row(
                                                 modifier = Modifier.fillMaxWidth(),
                                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
                                             ) {
-                                                IconButton(
-                                                    onClick = { deviceToEditId = device.id },
-                                                    modifier = Modifier
-                                                        .size(32.dp)
-                                                        .clip(CircleShape)
-                                                        .background(Color(0x263B5BFF), CircleShape)
-                                                ) {
-                                                    Icon(
-                                                        imageVector = Icons.Default.Edit,
-                                                        contentDescription = "Edit device IP",
-                                                        tint = Color(0xFFA4B4FF),
-                                                        modifier = Modifier.size(14.dp)
-                                                    )
-                                                }
-                                                Spacer(modifier = Modifier.weight(1f))
-                                                IconButton(
-                                                    onClick = { deviceToDeleteId = device.id },
-                                                    modifier = Modifier
-                                                        .size(32.dp)
-                                                        .clip(CircleShape)
-                                                        .background(Color(0x26FF3B30), CircleShape)
-                                                ) {
-                                                    Icon(
-                                                        imageVector = Icons.Default.Delete,
-                                                        contentDescription = "Delete device",
-                                                        tint = Color(0xFFFF8A80),
-                                                        modifier = Modifier.size(14.dp)
-                                                    )
-                                                }
+                                                CardActionButton(
+                                                    label = "Edit",
+                                                    icon = Icons.Default.Edit,
+                                                    tint = Color(0xFFA4B4FF),
+                                                    background = Color(0x263B5BFF),
+                                                    border = Color(0x553B5BFF),
+                                                    modifier = Modifier.weight(1f),
+                                                    onClick = { deviceToEditId = device.id }
+                                                )
+                                                CardActionButton(
+                                                    label = "Remove",
+                                                    icon = Icons.Default.Delete,
+                                                    tint = Color(0xFFFF8A80),
+                                                    background = Color(0x26FF3B30),
+                                                    border = Color(0x55FF3B30),
+                                                    modifier = Modifier.weight(1f),
+                                                    onClick = { deviceToDeleteId = device.id }
+                                                )
                                             }
                                         }
                                     }
@@ -1003,6 +1004,14 @@ fun ReceiversScreen(
                         onOpenXiaomiAutostartSettings = { openXiaomiAutostartSettings() },
                         hidePairedPcs = hidePairedPcs,
                         onHidePairedPcsChange = { updateHidePairedPcs(it) },
+                        onEditPairedDevice = { device ->
+                            showSettingsMenu = false
+                            deviceToEditId = device.id
+                        },
+                        onDeletePairedDevice = { device ->
+                            showSettingsMenu = false
+                            deviceToDeleteId = device.id
+                        },
                         appVersion = appVersion,
                         latestAppVersion = latestAppVersion,
                         onOpenLatestRelease = { openLatestRelease(context) },
@@ -1034,6 +1043,14 @@ fun ReceiversScreen(
                         onOpenXiaomiAutostartSettings = { openXiaomiAutostartSettings() },
                         hidePairedPcs = hidePairedPcs,
                         onHidePairedPcsChange = { updateHidePairedPcs(it) },
+                        onEditPairedDevice = { device ->
+                            showSettingsMenu = false
+                            deviceToEditId = device.id
+                        },
+                        onDeletePairedDevice = { device ->
+                            showSettingsMenu = false
+                            deviceToDeleteId = device.id
+                        },
                         appVersion = appVersion,
                         latestAppVersion = latestAppVersion,
                         onOpenLatestRelease = { openLatestRelease(context) },
@@ -1614,12 +1631,81 @@ private fun BackgroundReadinessSection(
     }
 }
 
+// A single endpoint row inside an expanded receiver card: a small label chip + monospace value.
+@Composable
+private fun EndpointLine(label: String, value: String) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            modifier = Modifier
+                .clip(RoundedCornerShape(4.dp))
+                .background(Color(0x1FFFFFFF))
+                .padding(horizontal = 5.dp, vertical = 1.dp)
+        ) {
+            Text(
+                text = label,
+                color = Color(0xFFB7B9C4),
+                fontSize = 9.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 0.5.sp
+            )
+        }
+        Spacer(modifier = Modifier.width(6.dp))
+        Text(
+            text = value,
+            color = Color(0xFF9A9CA6),
+            fontSize = 11.sp,
+            fontFamily = FontFamily.Monospace,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+// Labeled pill button used for the Edit / Remove actions on a receiver card.
+@Composable
+private fun CardActionButton(
+    label: String,
+    icon: ImageVector,
+    tint: Color,
+    background: Color,
+    border: Color,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(10.dp))
+            .background(background)
+            .border(BorderStroke(1.dp, border), RoundedCornerShape(10.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 7.dp),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = label,
+            tint = tint,
+            modifier = Modifier.size(14.dp)
+        )
+        Spacer(modifier = Modifier.width(6.dp))
+        Text(
+            text = label,
+            color = tint,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Bold
+        )
+    }
+}
+
 @Composable
 private fun PairedPcSettingsSection(
     pairedDevices: List<PairedDevice>,
     selectedDevice: PairedDevice?,
     hidePairedPcs: Boolean,
     onHidePairedPcsChange: (Boolean) -> Unit,
+    onEditDevice: (PairedDevice) -> Unit,
+    onDeleteDevice: (PairedDevice) -> Unit,
     isLandscape: Boolean = false
 ) {
     SettingsSectionCard(
@@ -1660,9 +1746,13 @@ private fun PairedPcSettingsSection(
                     fontSize = if (isLandscape) 9.sp else 10.sp
                 )
             } else {
-                pairedDevices.take(4).forEach { device ->
+                pairedDevices.forEach { device ->
                     val displayName = device.alias.ifBlank { device.name }
                     val selected = selectedDevice?.id == device.id
+                    val hostText = device.localHosts.ifBlank { device.host }
+                        .split(',').firstOrNull()?.trim().orEmpty()
+                    val btnSize = if (isLandscape) 26.dp else 30.dp
+                    val iconSize = if (isLandscape) 12.dp else 14.dp
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -1676,24 +1766,57 @@ private fun PairedPcSettingsSection(
                                 .background(if (selected) Color(0xFF4CAF50) else Color(0x4DFFFFFF))
                         )
                         Spacer(modifier = Modifier.width(7.dp))
-                        Text(
-                            text = displayName,
-                            color = Color.White.copy(alpha = if (selected) 0.95f else 0.72f),
-                            fontSize = if (isLandscape) 9.sp else 10.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f)
-                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = displayName,
+                                color = Color.White.copy(alpha = if (selected) 0.95f else 0.72f),
+                                fontSize = if (isLandscape) 9.sp else 10.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            if (hostText.isNotEmpty()) {
+                                Text(
+                                    text = "${device.os.uppercase()} · $hostText",
+                                    color = Color(0x66FFFFFF),
+                                    fontSize = if (isLandscape) 8.sp else 9.sp,
+                                    fontFamily = FontFamily.Monospace,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.width(6.dp))
+                        IconButton(
+                            onClick = { onEditDevice(device) },
+                            modifier = Modifier
+                                .size(btnSize)
+                                .clip(CircleShape)
+                                .background(Color(0x263B5BFF), CircleShape)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Edit,
+                                contentDescription = "Edit $displayName",
+                                tint = Color(0xFFA4B4FF),
+                                modifier = Modifier.size(iconSize)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(6.dp))
+                        IconButton(
+                            onClick = { onDeleteDevice(device) },
+                            modifier = Modifier
+                                .size(btnSize)
+                                .clip(CircleShape)
+                                .background(Color(0x26FF3B30), CircleShape)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Delete,
+                                contentDescription = "Remove $displayName",
+                                tint = Color(0xFFFF8A80),
+                                modifier = Modifier.size(iconSize)
+                            )
+                        }
                     }
-                }
-                val hiddenCount = pairedDevices.size - 4
-                if (hiddenCount > 0) {
-                    Text(
-                        text = "+$hiddenCount more",
-                        color = Color(0x8CFFFFFF),
-                        fontSize = if (isLandscape) 9.sp else 10.sp
-                    )
                 }
             }
         }
@@ -1857,6 +1980,8 @@ private fun PortraitSettingsMenu(
     onOpenXiaomiAutostartSettings: () -> Unit,
     hidePairedPcs: Boolean,
     onHidePairedPcsChange: (Boolean) -> Unit,
+    onEditPairedDevice: (PairedDevice) -> Unit,
+    onDeletePairedDevice: (PairedDevice) -> Unit,
     appVersion: String,
     latestAppVersion: String?,
     onOpenLatestRelease: () -> Unit,
@@ -1973,7 +2098,9 @@ private fun PortraitSettingsMenu(
                 pairedDevices = pairedDevices,
                 selectedDevice = selectedDevice,
                 hidePairedPcs = hidePairedPcs,
-                onHidePairedPcsChange = onHidePairedPcsChange
+                onHidePairedPcsChange = onHidePairedPcsChange,
+                onEditDevice = onEditPairedDevice,
+                onDeleteDevice = onDeletePairedDevice
             )
 
             Spacer(modifier = Modifier.height(10.dp))
@@ -2119,6 +2246,8 @@ private fun LandscapeSettingsMenu(
     onOpenXiaomiAutostartSettings: () -> Unit,
     hidePairedPcs: Boolean,
     onHidePairedPcsChange: (Boolean) -> Unit,
+    onEditPairedDevice: (PairedDevice) -> Unit,
+    onDeletePairedDevice: (PairedDevice) -> Unit,
     appVersion: String,
     latestAppVersion: String?,
     onOpenLatestRelease: () -> Unit,
@@ -2199,6 +2328,8 @@ private fun LandscapeSettingsMenu(
                     selectedDevice = selectedDevice,
                     hidePairedPcs = hidePairedPcs,
                     onHidePairedPcsChange = onHidePairedPcsChange,
+                    onEditDevice = onEditPairedDevice,
+                    onDeleteDevice = onDeletePairedDevice,
                     isLandscape = true
                 )
 
